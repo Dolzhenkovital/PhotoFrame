@@ -53,7 +53,7 @@ class MainActivity : AppCompatActivity(), SlideshowController.Listener {
         motionView = findViewById(R.id.motion_view)
 
         queue = PlaybackQueue()
-        val motionPlayer = MotionPlayer(motionView, contentResolver)
+        val motionPlayer = MotionPlayer(motionView, contentResolver, app.ioExecutor)
         controller = SlideshowController(
             photoA, photoB, app.prefs, queue, this, motionPlayer
         )

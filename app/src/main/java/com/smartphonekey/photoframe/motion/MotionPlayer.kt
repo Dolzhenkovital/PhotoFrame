@@ -5,9 +5,13 @@ import android.graphics.Matrix
 import android.graphics.SurfaceTexture
 import android.media.MediaPlayer
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import android.os.ParcelFileDescriptor
 import android.view.Surface
 import android.view.TextureView
 import com.smartphonekey.photoframe.core.PhotoItem
+import java.util.concurrent.Executor
 import kotlin.math.max
 import kotlin.math.min
 
@@ -28,8 +32,10 @@ import kotlin.math.min
 class MotionPlayer(
     private val textureView: TextureView,
     private val resolver: ContentResolver,
+    private val ioExecutor: Executor,
 ) {
 
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var player: MediaPlayer? = null
     private var surface: Surface? = null
 
@@ -80,45 +86,62 @@ class MotionPlayer(
             return
         }
         val token = ++playToken
-        try {
-            val texture = textureView.surfaceTexture ?: return
-            val mediaPlayer = MediaPlayer()
-            player = mediaPlayer
-            val videoSurface = Surface(texture)
-            surface = videoSurface
+        // Opening a SAF descriptor is a synchronous provider IPC — never on
+        // the main thread mid-slide. The player itself is main-thread-only,
+        // so the descriptor hops back via the handler.
+        ioExecutor.execute {
+            val pfd = try {
+                resolver.openFileDescriptor(Uri.parse(item.uri), "r")
+            } catch (e: Exception) {
+                null
+            }
+            mainHandler.post {
+                if (token != playToken || pfd == null) {
+                    pfd?.let { runCatching { it.close() } }
+                    return@post
+                }
+                startPlayback(pfd, item, fillScreen)
+            }
+        }
+    }
 
-            // MediaPlayer dups the descriptor inside setDataSource, so the
-            // ParcelFileDescriptor can (must) be closed right after.
-            resolver.openFileDescriptor(Uri.parse(item.uri), "r")?.use { pfd ->
+    /** Main thread; [pfd] is always closed — MediaPlayer dups it inside
+     *  setDataSource, so it is only needed for the duration of this call. */
+    private fun startPlayback(pfd: ParcelFileDescriptor, item: PhotoItem, fillScreen: Boolean) {
+        val token = playToken
+        pfd.use {
+            try {
+                val texture = textureView.surfaceTexture ?: return
+                val mediaPlayer = MediaPlayer()
+                player = mediaPlayer
+                val videoSurface = Surface(texture)
+                surface = videoSurface
+
                 mediaPlayer.setDataSource(
-                    pfd.fileDescriptor, item.videoOffsetBytes, item.videoLengthBytes
+                    it.fileDescriptor, item.videoOffsetBytes, item.videoLengthBytes
                 )
-            } ?: run {
-                stop()
-                return
+                mediaPlayer.setSurface(videoSurface)
+                mediaPlayer.setVolume(0f, 0f)
+                mediaPlayer.isLooping = false
+                mediaPlayer.setOnVideoSizeChangedListener { _, width, height ->
+                    if (token == playToken) applyTransform(width, height, fillScreen)
+                }
+                mediaPlayer.setOnPreparedListener {
+                    if (token != playToken) return@setOnPreparedListener
+                    textureView.animate().alpha(1f).setDuration(FADE_MS).start()
+                    mediaPlayer.start()
+                }
+                mediaPlayer.setOnCompletionListener {
+                    if (token == playToken) fadeOutAndRelease()
+                }
+                mediaPlayer.setOnErrorListener { _, _, _ ->
+                    if (token == playToken) fadeOutAndRelease()
+                    true // handled — never surface a dialog
+                }
+                mediaPlayer.prepareAsync()
+            } catch (e: Exception) {
+                stop() // still photo remains — exactly the intended fallback
             }
-
-            mediaPlayer.setSurface(videoSurface)
-            mediaPlayer.setVolume(0f, 0f)
-            mediaPlayer.isLooping = false
-            mediaPlayer.setOnVideoSizeChangedListener { _, width, height ->
-                if (token == playToken) applyTransform(width, height, fillScreen)
-            }
-            mediaPlayer.setOnPreparedListener {
-                if (token != playToken) return@setOnPreparedListener
-                textureView.animate().alpha(1f).setDuration(FADE_MS).start()
-                mediaPlayer.start()
-            }
-            mediaPlayer.setOnCompletionListener {
-                if (token == playToken) fadeOutAndRelease()
-            }
-            mediaPlayer.setOnErrorListener { _, _, _ ->
-                if (token == playToken) fadeOutAndRelease()
-                true // handled — never surface a dialog
-            }
-            mediaPlayer.prepareAsync()
-        } catch (e: Exception) {
-            stop() // still photo remains — exactly the intended fallback
         }
     }
 

@@ -22,6 +22,13 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Validate tag format
+        run: |
+          if ! printf '%s' "$GITHUB_REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Tag '$GITHUB_REF_NAME' is not vX.Y.Z — refusing to release."
+            exit 1
+          fi
+
       # SHA-pinned: this job handles signing secrets, so a hijacked mutable
       # tag must not be able to swap the action code underneath it.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
