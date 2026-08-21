@@ -36,7 +36,7 @@ jobs:
             echo "::notice::OPENAI_API_KEY secret is not set — skipping LLM review."
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: steps.key.outputs.present == 'true'
 
       - name: Collect PR diff
