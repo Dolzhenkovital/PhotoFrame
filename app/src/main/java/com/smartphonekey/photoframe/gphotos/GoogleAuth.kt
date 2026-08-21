@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.activity.ComponentActivity
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.Lifecycle
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.common.ConnectionResult
@@ -22,9 +23,19 @@ import com.google.android.gms.common.api.Scope
  */
 class GoogleAuth(
     private val activity: ComponentActivity,
-    private val onToken: (String) -> Unit,
-    private val onError: (String?) -> Unit,
+    onToken: (String) -> Unit,
+    onError: (String?) -> Unit,
 ) {
+
+    // Play services callbacks can land after the Activity is gone (rotation,
+    // back-out). Delivering them would touch destroyed views and keep the
+    // Activity alive, so they are dropped once the lifecycle is DESTROYED.
+    private val onToken: (String) -> Unit = { token -> ifAlive { onToken(token) } }
+    private val onError: (String?) -> Unit = { detail -> ifAlive { onError(detail) } }
+
+    private fun ifAlive(block: () -> Unit) {
+        if (activity.lifecycle.currentState != Lifecycle.State.DESTROYED) block()
+    }
 
     private val consentLauncher = activity.registerForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
@@ -35,12 +46,12 @@ class GoogleAuth(
                 val auth = Identity.getAuthorizationClient(activity)
                     .getAuthorizationResultFromIntent(data)
                 val token = auth.accessToken
-                if (token != null) onToken(token) else onError(null)
+                if (token != null) this.onToken(token) else this.onError(null)
             } catch (e: ApiException) {
-                onError(e.message)
+                this.onError(e.message)
             }
         } else {
-            onError(null) // user backed out of the consent screen
+            this.onError(null) // user backed out of the consent screen
         }
     }
 

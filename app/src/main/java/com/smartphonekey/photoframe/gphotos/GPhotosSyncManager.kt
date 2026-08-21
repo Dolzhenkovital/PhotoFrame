@@ -2,9 +2,8 @@ package com.smartphonekey.photoframe.gphotos
 
 import android.os.Handler
 import android.os.Looper
-import com.smartphonekey.photoframe.settings.Prefs
 import java.io.File
-import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executor
 
 /**
  * Orchestrates one "add photos" round-trip:
@@ -12,16 +11,43 @@ import java.util.concurrent.ExecutorService
  * poll until mediaItemsSet → list items → download into the cache → evict.
  *
  * App-scoped: keeps working when the settings screen closes (the frame's
- * process is effectively immortal — the screen never sleeps). Polling is
- * scheduled on the main Handler; every network/disk step hops onto the IO
+ * process is effectively immortal — the screen never sleeps). Callbacks land
+ * on the main thread via [poster]; every network/disk step hops onto the IO
  * executor. Downloads are sequential — parallel I/O chokes old frames.
+ *
+ * [poster] and [clock] are injectable so the whole state machine — including
+ * cancellation races — is unit-testable on the JVM without Android.
  */
 class GPhotosSyncManager(
-    private val cache: GPhotosCache,
-    private val prefs: Prefs,
-    private val ioExecutor: ExecutorService,
-    private val api: PickerApi = PickerApi(),
+    private val cache: PhotoStore,
+    private val cacheCapBytes: () -> Long,
+    private val ioExecutor: Executor,
+    private val api: PickerClient = PickerApi(),
+    private val poster: Poster = MainThreadPoster(),
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
+
+    /** Main-thread dispatch, abstracted for tests. */
+    interface Poster {
+        fun post(block: () -> Unit)
+        fun postDelayed(delayMs: Long, block: () -> Unit)
+        fun cancelPending()
+    }
+
+    class MainThreadPoster : Poster {
+        private val handler = Handler(Looper.getMainLooper())
+        override fun post(block: () -> Unit) {
+            handler.post(block)
+        }
+
+        override fun postDelayed(delayMs: Long, block: () -> Unit) {
+            handler.postDelayed(block, delayMs)
+        }
+
+        override fun cancelPending() {
+            handler.removeCallbacksAndMessages(null)
+        }
+    }
 
     sealed class State {
         object Idle : State()
@@ -36,12 +62,12 @@ class GPhotosSyncManager(
         fun onState(state: State)
     }
 
-    private val handler = Handler(Looper.getMainLooper())
-
     @Volatile
     private var cancelled = false
     private var listener: Listener? = null
     private var currentToken: String? = null
+
+    @Volatile
     private var currentSessionId: String? = null
 
     var state: State = State.Idle
@@ -71,7 +97,13 @@ class GPhotosSyncManager(
             try {
                 val session = api.createSession(token)
                 currentSessionId = session.id
-                val deadline = System.currentTimeMillis() + session.timeoutMs
+                // cancel() may have run while we were creating the session —
+                // it could not have known this id, so clean it up here.
+                if (cancelled) {
+                    deleteSessionQuietly()
+                    return@io
+                }
+                val deadline = clock() + session.timeoutMs
                 post {
                     if (cancelled) return@post
                     setState(State.WaitingForPick(session.pickerUri))
@@ -86,7 +118,7 @@ class GPhotosSyncManager(
     fun cancel() {
         if (!isActive) return
         cancelled = true
-        handler.removeCallbacksAndMessages(null)
+        poster.cancelPending()
         deleteSessionQuietly()
         setState(State.Idle)
     }
@@ -97,9 +129,10 @@ class GPhotosSyncManager(
         maxDimension: Int,
         deadline: Long,
     ) {
-        handler.postDelayed({
+        poster.postDelayed(session.pollIntervalMs) {
             if (cancelled) return@postDelayed
             io {
+                if (cancelled) return@io
                 try {
                     val fresh = api.getSession(token, session.id)
                     post {
@@ -108,7 +141,7 @@ class GPhotosSyncManager(
                             fresh.mediaItemsSet ->
                                 io { downloadAll(token, session.id, maxDimension) }
 
-                            System.currentTimeMillis() > deadline -> {
+                            clock() > deadline -> {
                                 deleteSessionQuietly()
                                 setState(State.Failed(null, timedOut = true))
                             }
@@ -120,7 +153,7 @@ class GPhotosSyncManager(
                     failWith(e)
                 }
             }
-        }, session.pollIntervalMs)
+        }
     }
 
     private fun downloadAll(token: String, sessionId: String, maxDimension: Int) {
@@ -136,7 +169,7 @@ class GPhotosSyncManager(
                 val tmp = File(cache.mediaDir, cache.fileNameFor(item) + ".tmp")
                 try {
                     api.download(token, item, maxDimension, tmp)
-                    if (cache.commit(item, tmp, System.currentTimeMillis())) added++
+                    if (cache.commit(item, tmp, clock())) added++
                 } catch (e: Exception) {
                     tmp.delete() // one broken download must not kill the batch
                 }
@@ -144,11 +177,19 @@ class GPhotosSyncManager(
                 post { if (!cancelled) setState(State.Downloading(done, fresh.size)) }
             }
 
+            // A cancelled run must not report success: cancel() already moved
+            // the state to Idle and it stays there. Photos downloaded before
+            // the cancel stay in the cache — they are complete and indexed.
+            if (cancelled) {
+                deleteSessionQuietly()
+                return
+            }
+
             api.deleteSession(token, sessionId)
             currentSessionId = null
-            val capTooSmall = cache.evictToCap(prefs.cacheSizeBytes)
+            val capTooSmall = cache.evictToCap(cacheCapBytes())
             val total = added
-            post { setState(State.Finished(total, capTooSmall)) }
+            post { if (!cancelled) setState(State.Finished(total, capTooSmall)) }
         } catch (e: Exception) {
             failWith(e)
         }
@@ -175,5 +216,5 @@ class GPhotosSyncManager(
 
     private fun io(block: () -> Unit) = ioExecutor.execute(block)
 
-    private fun post(block: () -> Unit) = handler.post(block)
+    private fun post(block: () -> Unit) = poster.post(block)
 }

@@ -16,13 +16,13 @@ import java.security.MessageDigest
  * SQLite index as the single source of truth, tmp+rename crash safety,
  * LRU eviction against the user-set cap.
  */
-class GPhotosCache(context: Context) {
+class GPhotosCache(context: Context) : PhotoStore {
 
     private val appContext = context.applicationContext
     private val db = Db(appContext)
     private val pendingShown = HashMap<String, Long>() // file_name → timestamp
 
-    val mediaDir: File by lazy {
+    override val mediaDir: File by lazy {
         val base = appContext.getExternalFilesDir("gphotos")
             ?: File(appContext.filesDir, "gphotos")
         File(base, "media").apply { mkdirs() }
@@ -41,7 +41,7 @@ class GPhotosCache(context: Context) {
             .forEach { db.delete(it.fileName) }
     }
 
-    fun fileNameFor(item: PickedItem): String {
+    override fun fileNameFor(item: PickedItem): String {
         val digest = MessageDigest.getInstance("SHA-1")
             .digest(item.id.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
@@ -53,14 +53,14 @@ class GPhotosCache(context: Context) {
         return digest + ext
     }
 
-    fun contains(item: PickedItem): Boolean = db.exists(fileNameFor(item))
+    override fun contains(item: PickedItem): Boolean = db.exists(fileNameFor(item))
 
     /**
      * Moves a fully-downloaded tmp file into place and indexes it.
      * Dimensions are measured from the actual bytes — server-side resizing
      * bakes in EXIF rotation, so a bounds decode is the ground truth.
      */
-    fun commit(item: PickedItem, tmp: File, now: Long): Boolean {
+    override fun commit(item: PickedItem, tmp: File, now: Long): Boolean {
         val name = fileNameFor(item)
         val final = File(mediaDir, name)
         if (!tmp.renameTo(final)) {
@@ -79,19 +79,26 @@ class GPhotosCache(context: Context) {
         } catch (e: Exception) {
             // Unknown dims → SQUARE bucket; still displayable.
         }
-        db.upsert(
-            Db.Row(
-                fileName = name,
-                itemId = item.id,
-                mime = item.mimeType,
-                width = width,
-                height = height,
-                sizeBytes = final.length(),
-                downloadedAt = now,
-                lastShownAt = 0L,
+        return try {
+            db.upsert(
+                Db.Row(
+                    fileName = name,
+                    itemId = item.id,
+                    mime = item.mimeType,
+                    width = width,
+                    height = height,
+                    sizeBytes = final.length(),
+                    downloadedAt = now,
+                    lastShownAt = 0L,
+                )
             )
-        )
-        return true
+            true
+        } catch (e: Exception) {
+            // The file exists but is unreachable without an index row; drop it
+            // now rather than leaving an orphan for the next startup sweep.
+            final.delete()
+            false
+        }
     }
 
     fun loadAllAsPhotoItems(): List<PhotoItem> = db.listAll().map { row ->
@@ -130,7 +137,7 @@ class GPhotosCache(context: Context) {
     }
 
     /** Applies the LRU policy; returns true when the cap is too small. */
-    fun evictToCap(capBytes: Long): Boolean {
+    override fun evictToCap(capBytes: Long): Boolean {
         flush()
         val entries = db.listAll().map {
             CacheEviction.Entry(it.fileName, it.sizeBytes, it.lastShownAt, it.downloadedAt)

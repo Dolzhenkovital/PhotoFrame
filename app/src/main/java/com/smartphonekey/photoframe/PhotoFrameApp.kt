@@ -46,7 +46,11 @@ class PhotoFrameApp : Application() {
         prefs = Prefs(this)
         index = ScanIndexDb(this)
         gphotosCache = GPhotosCache(this)
-        gphotosSync = GPhotosSyncManager(gphotosCache, prefs, ioExecutor)
+        gphotosSync = GPhotosSyncManager(
+            cache = gphotosCache,
+            cacheCapBytes = { prefs.cacheSizeBytes },
+            ioExecutor = ioExecutor,
+        )
         // Heal any half-written cache files from a previous crash.
         ioExecutor.execute { gphotosCache.sweep() }
         // Old frames: keep Glide's memory cache small; our two-view slideshow

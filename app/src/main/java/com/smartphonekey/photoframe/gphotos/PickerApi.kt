@@ -4,30 +4,33 @@ import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 
 /**
  * Thin blocking client for the Photos Picker API. HttpURLConnection on
  * purpose — two endpoints do not justify an HTTP stack on an old frame
  * (low-end-performance skill). Call only from a background executor.
  */
-class PickerApi(private val baseUrl: String = "https://photospicker.googleapis.com/v1") {
+class PickerApi(
+    private val baseUrl: String = "https://photospicker.googleapis.com/v1",
+) : PickerClient {
 
     class ApiException(val code: Int, message: String) : IOException("HTTP $code: $message")
 
-    fun createSession(token: String): PickerSession =
+    override fun createSession(token: String): PickerSession =
         PickerJson.parseSession(request("POST", "$baseUrl/sessions", token, body = "{}"))
 
-    fun getSession(token: String, sessionId: String): PickerSession =
-        PickerJson.parseSession(request("GET", "$baseUrl/sessions/$sessionId", token))
+    override fun getSession(token: String, sessionId: String): PickerSession =
+        PickerJson.parseSession(request("GET", sessionUrl(sessionId), token))
 
-    fun listAllMediaItems(token: String, sessionId: String): List<PickedItem> {
+    override fun listAllMediaItems(token: String, sessionId: String): List<PickedItem> {
         val items = ArrayList<PickedItem>()
         var pageToken: String? = null
         var pages = 0
         do {
-            var url = "$baseUrl/mediaItems?sessionId=$sessionId&pageSize=100"
-            pageToken?.let { url += "&pageToken=$it" }
-            val page = PickerJson.parseMediaItemsPage(request("GET", url, token))
+            val page = PickerJson.parseMediaItemsPage(
+                request("GET", mediaItemsUrl(sessionId, pageToken), token)
+            )
             items.addAll(page.items)
             pageToken = page.nextPageToken
             pages++
@@ -35,9 +38,9 @@ class PickerApi(private val baseUrl: String = "https://photospicker.googleapis.c
         return items
     }
 
-    fun deleteSession(token: String, sessionId: String) {
+    override fun deleteSession(token: String, sessionId: String) {
         try {
-            request("DELETE", "$baseUrl/sessions/$sessionId", token)
+            request("DELETE", sessionUrl(sessionId), token)
         } catch (e: IOException) {
             // Best-effort cleanup; sessions expire on their own anyway.
         }
@@ -50,7 +53,7 @@ class PickerApi(private val baseUrl: String = "https://photospicker.googleapis.c
      * inside that box and transcodes HEIC to JPEG, which is exactly what an
      * old frame needs (google-photos-picker skill).
      */
-    fun download(token: String, item: PickedItem, maxDimension: Int, target: File) {
+    override fun download(token: String, item: PickedItem, maxDimension: Int, target: File) {
         val url = "${item.baseUrl}=w$maxDimension-h$maxDimension"
         val conn = open("GET", url, token)
         try {
@@ -104,5 +107,22 @@ class PickerApi(private val baseUrl: String = "https://photospicker.googleapis.c
 
     companion object {
         private const val MAX_PAGES = 100 // 10k items — far beyond picker limits
+
+        /**
+         * Page tokens are opaque base64-ish strings that routinely contain
+         * `+`, `/` and `=`; pasted raw into a query string they would be
+         * misread by the server (`+` becomes a space). Session ids get the
+         * same treatment so a stray character can never break the path.
+         */
+        fun encode(value: String): String =
+            URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+    }
+
+    private fun sessionUrl(sessionId: String) = "$baseUrl/sessions/${encode(sessionId)}"
+
+    internal fun mediaItemsUrl(sessionId: String, pageToken: String?): String {
+        var url = "$baseUrl/mediaItems?sessionId=${encode(sessionId)}&pageSize=100"
+        if (pageToken != null) url += "&pageToken=${encode(pageToken)}"
+        return url
     }
 }
