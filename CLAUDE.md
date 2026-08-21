@@ -52,7 +52,7 @@ weak devices (Android 6.0+, ~1 GB RAM).
 ## Roadmap
 
 - [x] Phase 0 — infrastructure: skeleton, skills, CI/CD with LLM review
-- [ ] Phase 1 — slideshow core: local photos (SAF), queue, timer, transitions, settings screen
+- [x] Phase 1 — slideshow core: local photos (SAF), queue, timer, transitions, settings screen
 - [ ] Phase 2 — Google Photos: OAuth, picker (QR flow), cache + sync
 - [ ] Phase 3 — motion photos, polish (Ken Burns, fill-crop toggle), release workflow
 

@@ -1,0 +1,42 @@
+<resources>
+    <string name="app_name">PhotoFrame</string>
+    <string name="settings_title">Налаштування</string>
+
+    <string name="empty_no_photos">Фотографій поки немає.\nОберіть теку з вашими знімками.</string>
+    <string name="error_all_failed">Не вдалося показати фотографії з обраної теки.</string>
+    <string name="pick_folder_button">Обрати теку</string>
+
+    <string name="cat_source">Джерело фото</string>
+    <string name="pref_folder_title">Тека з фотографіями</string>
+    <string name="pref_folder_summary_none">Не обрано</string>
+    <string name="pref_rescan_title">Пересканувати теку</string>
+    <string name="scanning">Сканування…</string>
+    <string name="scan_done">Знайдено фото: %1$d</string>
+
+    <string name="cat_slideshow">Слайдшоу</string>
+    <string name="pref_interval_title">Інтервал зміни фото</string>
+    <string name="pref_transition_title">Ефект переходу</string>
+
+    <string name="interval_5s">5 секунд</string>
+    <string name="interval_10s">10 секунд</string>
+    <string name="interval_15s">15 секунд</string>
+    <string name="interval_30s">30 секунд</string>
+    <string name="interval_1m">1 хвилина</string>
+    <string name="interval_2m">2 хвилини</string>
+    <string name="interval_5m">5 хвилин</string>
+    <string name="interval_10m">10 хвилин</string>
+    <string name="interval_30m">30 хвилин</string>
+    <string name="interval_1h">1 година</string>
+
+    <string name="effect_crossfade">Плавне розчинення</string>
+    <string name="effect_fade_black">Через затемнення</string>
+    <string name="effect_slide_left">Зсув уліво</string>
+    <string name="effect_slide_right">Зсув управо</string>
+    <string name="effect_slide_up">Зсув угору</string>
+    <string name="effect_slide_down">Зсув униз</string>
+    <string name="effect_zoom_in">Наближення</string>
+    <string name="effect_zoom_out">Віддалення</string>
+    <string name="effect_ken_burns">Кен Бернз (повільний дрейф)</string>
+    <string name="effect_rotate_fade">Поворот із розчиненням</string>
+    <string name="effect_random">Випадковий</string>
+</resources>

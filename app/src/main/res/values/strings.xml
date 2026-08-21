@@ -1,3 +1,42 @@
 <resources>
     <string name="app_name">PhotoFrame</string>
+    <string name="settings_title">Settings</string>
+
+    <string name="empty_no_photos">No photos yet.\nPick a folder with your pictures.</string>
+    <string name="error_all_failed">Could not display photos from the selected folder.</string>
+    <string name="pick_folder_button">Choose folder</string>
+
+    <string name="cat_source">Photo source</string>
+    <string name="pref_folder_title">Photo folder</string>
+    <string name="pref_folder_summary_none">Not selected</string>
+    <string name="pref_rescan_title">Rescan folder</string>
+    <string name="scanning">Scanning…</string>
+    <string name="scan_done">Photos found: %1$d</string>
+
+    <string name="cat_slideshow">Slideshow</string>
+    <string name="pref_interval_title">Slide interval</string>
+    <string name="pref_transition_title">Transition effect</string>
+
+    <string name="interval_5s">5 seconds</string>
+    <string name="interval_10s">10 seconds</string>
+    <string name="interval_15s">15 seconds</string>
+    <string name="interval_30s">30 seconds</string>
+    <string name="interval_1m">1 minute</string>
+    <string name="interval_2m">2 minutes</string>
+    <string name="interval_5m">5 minutes</string>
+    <string name="interval_10m">10 minutes</string>
+    <string name="interval_30m">30 minutes</string>
+    <string name="interval_1h">1 hour</string>
+
+    <string name="effect_crossfade">Crossfade</string>
+    <string name="effect_fade_black">Fade through black</string>
+    <string name="effect_slide_left">Slide left</string>
+    <string name="effect_slide_right">Slide right</string>
+    <string name="effect_slide_up">Slide up</string>
+    <string name="effect_slide_down">Slide down</string>
+    <string name="effect_zoom_in">Zoom in</string>
+    <string name="effect_zoom_out">Zoom out</string>
+    <string name="effect_ken_burns">Ken Burns (slow drift)</string>
+    <string name="effect_rotate_fade">Rotate &amp; fade</string>
+    <string name="effect_random">Random</string>
 </resources>
