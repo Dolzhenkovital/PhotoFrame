@@ -51,6 +51,10 @@
     <string name="cat_slideshow">Slideshow</string>
     <string name="pref_interval_title">Slide interval</string>
     <string name="pref_transition_title">Transition effect</string>
+    <string name="pref_fill_title">Fill the screen</string>
+    <string name="pref_fill_summary">Crop photos to cover the whole screen instead of letterboxing</string>
+    <string name="pref_motion_title">Motion Photos</string>
+    <string name="pref_motion_summary">Play the short video inside live photos once per slide (local photos with embedded video)</string>
 
     <string name="interval_5s">5 seconds</string>
     <string name="interval_10s">10 seconds</string>

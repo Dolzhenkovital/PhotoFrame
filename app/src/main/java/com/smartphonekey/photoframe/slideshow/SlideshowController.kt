@@ -18,6 +18,7 @@ import com.bumptech.glide.request.RequestOptions
 import com.bumptech.glide.request.target.Target
 import com.smartphonekey.photoframe.core.PhotoItem
 import com.smartphonekey.photoframe.core.PlaybackQueue
+import com.smartphonekey.photoframe.motion.MotionPlayer
 import com.smartphonekey.photoframe.settings.Prefs
 import kotlin.random.Random
 
@@ -34,6 +35,7 @@ class SlideshowController(
     private val prefs: Prefs,
     private val queue: PlaybackQueue,
     private val listener: Listener,
+    private val motionPlayer: MotionPlayer? = null,
 ) {
 
     interface Listener {
@@ -70,6 +72,15 @@ class SlideshowController(
             return
         }
         running = true
+        // Fill & crop is a display preference, applied on (re)start so a
+        // settings change takes effect the moment the user comes back.
+        val scaleType = if (prefs.fillScreen) {
+            ImageView.ScaleType.CENTER_CROP
+        } else {
+            ImageView.ScaleType.FIT_CENTER
+        }
+        viewA.scaleType = scaleType
+        viewB.scaleType = scaleType
         nextReady = false
         consecutiveFailures = 0
         // First photo goes through the normal advance path: the "outgoing"
@@ -83,6 +94,7 @@ class SlideshowController(
         pendingAdvance = false
         nextReady = false
         handler.removeCallbacksAndMessages(null)
+        motionPlayer?.stop()
         stopDrift(reset = true)
         Transitions.resetProperties(viewA)
         Transitions.resetProperties(viewB)
@@ -156,6 +168,7 @@ class SlideshowController(
             return
         }
         nextReady = false
+        motionPlayer?.stop() // video must never composite under a transition
         stopDrift(reset = false) // transition's finish() resets properties
         val effect = TransitionEffect.resolve(prefs.transitionEffect, lastEffect, random)
         lastEffect = effect
@@ -172,14 +185,28 @@ class SlideshowController(
     }
 
     private fun afterShown() {
-        frontItem?.let { shown -> onPhotoShown?.invoke(shown) }
-        maybeStartDrift(front)
+        val shown = frontItem
+        shown?.let { onPhotoShown?.invoke(it) }
+        // The old GPU can composite a video OR animate views, not both
+        // (low-end-performance skill) — when the motion part plays, the Ken
+        // Burns drift for this slide is skipped.
+        if (shouldPlayMotion(shown)) {
+            motionPlayer?.playOnce(shown!!, prefs.fillScreen)
+        } else {
+            maybeStartDrift(front)
+        }
         if (queue.size > 1) {
             preloadNext()
             handler.removeCallbacks(advanceRunnable)
             handler.postDelayed(advanceRunnable, prefs.intervalSeconds * 1000L)
         }
     }
+
+    private fun shouldPlayMotion(shown: PhotoItem?): Boolean =
+        motionPlayer != null &&
+            prefs.motionPhotosEnabled &&
+            shown?.hasMotion == true &&
+            !isPowerSave()
 
     /** Ken Burns: slow zoom drift over the whole display interval. */
     private fun maybeStartDrift(view: ImageView) {

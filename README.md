@@ -28,7 +28,9 @@
 - **Фаза 2 — Google Photos** ✅: OAuth без секретів у коді, вибір фото через
   Picker API (QR-код для телефона або локально), дисковий кеш із лімітом
   (за замовчуванням 1 ГБ) та LRU-евікшеном, офлайн-показ
-- **Фаза 3 — Motion Photos** 🔜
+- **Фаза 3 — Motion Photos + реліз** ✅: «живі» фото (формати Google
+  MicroVideo/MotionPhoto v1, без розпакування), перемикач «заповнювати
+  екран», релізний workflow: тег `vX.Y.Z` → підписаний APK у GitHub Releases
 
 ## Налаштування Google Photos (одноразово)
 
@@ -58,6 +60,13 @@ Google вимагає власний OAuth-клієнт для кожного з
 | Android CI | push у `main`, PR | юніт-тести → Android Lint → збірка APK (артефакт) |
 | LLM PR Review | кожен PR | рев'ю дифу через OpenAI API, один коментар що оновлюється |
 | CI Failure Analysis | падіння Android CI | LLM читає логи і коментує діагноз та як полагодити |
+| Release | тег `v*` | тести → підписаний release-APK → GitHub Release |
+| LLM Smoke Test | вручну (Actions) | діагностика LLM-ендпоінта |
+
+Для підписаного релізу додайте секрети `RELEASE_KEYSTORE_BASE64` (base64
+файлу .jks), `RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_ALIAS`,
+`RELEASE_KEY_PASSWORD`. Без них реліз збереться непідписаним (з
+попередженням у лозі).
 
 Для LLM-функцій потрібен секрет **`OPENAI_API_KEY`** (Settings → Secrets and
 variables → Actions). Ендпоінт і модель за замовчуванням:

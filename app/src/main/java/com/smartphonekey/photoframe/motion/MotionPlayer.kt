@@ -1,0 +1,133 @@
+package com.smartphonekey.photoframe.motion
+
+import android.content.ContentResolver
+import android.graphics.Matrix
+import android.media.MediaPlayer
+import android.net.Uri
+import android.view.Surface
+import android.view.TextureView
+import com.smartphonekey.photoframe.core.PhotoItem
+import kotlin.math.max
+import kotlin.math.min
+
+/**
+ * Plays a motion photo's embedded video once, muted, over the still.
+ *
+ * Zero-copy: MediaPlayer.setDataSource(fd, offset, length) plays the MP4
+ * straight out of the JPEG — no extraction, no temp files (motion-photo
+ * skill). Rules for old hardware, all enforced here:
+ *  - ONE MediaPlayer instance ever: create → play → release before the next.
+ *  - Any error (unsupported codec, broken trailer) silently leaves the
+ *    still photo on screen — this feature is a garnish, not a meal.
+ *  - The TextureView sits above the ImageViews at alpha 0 and only fades in
+ *    once the first frames are ready.
+ *
+ * Main-thread only (MediaPlayer callbacks arrive on the looper thread).
+ */
+class MotionPlayer(
+    private val textureView: TextureView,
+    private val resolver: ContentResolver,
+) {
+
+    private var player: MediaPlayer? = null
+    private var surface: Surface? = null
+
+    /** Invalidates async callbacks from a superseded playback. */
+    private var playToken = 0
+
+    /** Starts playback; on any problem the still simply stays visible. */
+    fun playOnce(item: PhotoItem, fillScreen: Boolean) {
+        stop()
+        if (!item.hasMotion) return
+        if (!textureView.isAvailable) return // surface not ready yet — skip
+        val token = ++playToken
+        try {
+            val texture = textureView.surfaceTexture ?: return
+            val mediaPlayer = MediaPlayer()
+            player = mediaPlayer
+            val videoSurface = Surface(texture)
+            surface = videoSurface
+
+            // MediaPlayer dups the descriptor inside setDataSource, so the
+            // ParcelFileDescriptor can (must) be closed right after.
+            resolver.openFileDescriptor(Uri.parse(item.uri), "r")?.use { pfd ->
+                mediaPlayer.setDataSource(
+                    pfd.fileDescriptor, item.videoOffsetBytes, item.videoLengthBytes
+                )
+            } ?: run {
+                stop()
+                return
+            }
+
+            mediaPlayer.setSurface(videoSurface)
+            mediaPlayer.setVolume(0f, 0f)
+            mediaPlayer.isLooping = false
+            mediaPlayer.setOnVideoSizeChangedListener { _, width, height ->
+                if (token == playToken) applyTransform(width, height, fillScreen)
+            }
+            mediaPlayer.setOnPreparedListener {
+                if (token != playToken) return@setOnPreparedListener
+                textureView.animate().alpha(1f).setDuration(FADE_MS).start()
+                mediaPlayer.start()
+            }
+            mediaPlayer.setOnCompletionListener {
+                if (token == playToken) fadeOutAndRelease()
+            }
+            mediaPlayer.setOnErrorListener { _, _, _ ->
+                if (token == playToken) fadeOutAndRelease()
+                true // handled — never surface a dialog
+            }
+            mediaPlayer.prepareAsync()
+        } catch (e: Exception) {
+            stop() // still photo remains — exactly the intended fallback
+        }
+    }
+
+    /** Immediate teardown (slide change, screen off, settings toggle). */
+    fun stop() {
+        playToken++
+        textureView.animate().cancel()
+        textureView.alpha = 0f
+        releasePlayer()
+    }
+
+    private fun fadeOutAndRelease() {
+        val token = playToken
+        textureView.animate().alpha(0f).setDuration(FADE_MS)
+            .withEndAction { if (token == playToken) releasePlayer() }
+            .start()
+    }
+
+    private fun releasePlayer() {
+        player?.let { runCatching { it.release() } }
+        player = null
+        surface?.let { runCatching { it.release() } }
+        surface = null
+    }
+
+    /** Match the still underneath: fit (letterbox) or fill (crop). */
+    private fun applyTransform(videoWidth: Int, videoHeight: Int, fillScreen: Boolean) {
+        val viewWidth = textureView.width.toFloat()
+        val viewHeight = textureView.height.toFloat()
+        if (viewWidth <= 0 || viewHeight <= 0 || videoWidth <= 0 || videoHeight <= 0) return
+        // TextureView stretches video to the view by default; the transform
+        // rescales relative to that stretched state around the center.
+        val scale = if (fillScreen) {
+            max(viewWidth / videoWidth, viewHeight / videoHeight)
+        } else {
+            min(viewWidth / videoWidth, viewHeight / videoHeight)
+        }
+        val matrix = Matrix()
+        matrix.setScale(
+            videoWidth * scale / viewWidth,
+            videoHeight * scale / viewHeight,
+            viewWidth / 2f,
+            viewHeight / 2f,
+        )
+        textureView.setTransform(matrix)
+    }
+
+    private companion object {
+        const val FADE_MS = 150L
+    }
+}

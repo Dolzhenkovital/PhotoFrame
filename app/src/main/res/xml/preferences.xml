@@ -62,6 +62,18 @@
             android:defaultValue="CROSSFADE"
             app:useSimpleSummaryProvider="true" />
 
+        <SwitchPreferenceCompat
+            android:key="display_fill"
+            android:title="@string/pref_fill_title"
+            android:summary="@string/pref_fill_summary"
+            android:defaultValue="false" />
+
+        <SwitchPreferenceCompat
+            android:key="motion_photos_enabled"
+            android:title="@string/pref_motion_title"
+            android:summary="@string/pref_motion_summary"
+            android:defaultValue="false" />
+
     </PreferenceCategory>
 
 </PreferenceScreen>

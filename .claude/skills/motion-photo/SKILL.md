@@ -11,6 +11,14 @@ description: >-
 
 # Motion photo support
 
+> **Implementation status (Phase 3):** XMP-based detection
+> (`motion/MotionPhotoDetector`, head-only read shared with the scanner's
+> bounds/EXIF buffer) + zero-copy playback (`motion/MotionPlayer`,
+> TextureView above the stills). Legacy Samsung SEF-only files (S7–S10 era,
+> no XMP marker) are NOT detected — that needs a per-file tail scan, too
+> expensive at index time on old frames; it stays on the backlog. Modern
+> Samsungs (~2021+) write MotionPhoto v1 XMP and work.
+
 ## What a motion photo physically is
 
 One file: a normal JPEG (or HEIC) with an MP4 appended at the end. Metadata

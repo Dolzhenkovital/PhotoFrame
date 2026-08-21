@@ -12,7 +12,7 @@ import com.smartphonekey.photoframe.core.PhotoItem
  * rebuildable from a rescan, so schema upgrades just drop and recreate.
  */
 class ScanIndexDb(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "photo_index.db", null, 1) {
+    SQLiteOpenHelper(context.applicationContext, "photo_index.db", null, 2) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -22,20 +22,28 @@ class ScanIndexDb(context: Context) :
                 size INTEGER NOT NULL,
                 mtime INTEGER NOT NULL,
                 width INTEGER NOT NULL DEFAULT 0,
-                height INTEGER NOT NULL DEFAULT 0
+                height INTEGER NOT NULL DEFAULT 0,
+                video_offset INTEGER NOT NULL DEFAULT -1,
+                video_length INTEGER NOT NULL DEFAULT 0
             )"""
         )
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        db.execSQL("DROP TABLE IF EXISTS photos")
-        onCreate(db)
+        if (oldVersion < 2) {
+            // Additive change: keep the existing index (a wipe would blank
+            // the frame until a manual rescan). Motion columns default to
+            // "no video"; the next rescan fills them in.
+            db.execSQL("ALTER TABLE photos ADD COLUMN video_offset INTEGER NOT NULL DEFAULT -1")
+            db.execSQL("ALTER TABLE photos ADD COLUMN video_length INTEGER NOT NULL DEFAULT 0")
+        }
     }
 
     fun loadAll(): List<PhotoItem> {
         val out = ArrayList<PhotoItem>()
         readableDatabase.rawQuery(
-            "SELECT uri, name, size, mtime, width, height FROM photos", null
+            "SELECT uri, name, size, mtime, width, height, video_offset, video_length FROM photos",
+            null
         ).use { c ->
             while (c.moveToNext()) {
                 out.add(
@@ -46,6 +54,8 @@ class ScanIndexDb(context: Context) :
                         lastModified = c.getLong(3),
                         width = c.getInt(4),
                         height = c.getInt(5),
+                        videoOffsetBytes = c.getLong(6),
+                        videoLengthBytes = c.getLong(7),
                     )
                 )
             }
@@ -67,6 +77,8 @@ class ScanIndexDb(context: Context) :
                     put("mtime", item.lastModified)
                     put("width", item.width)
                     put("height", item.height)
+                    put("video_offset", item.videoOffsetBytes)
+                    put("video_length", item.videoLengthBytes)
                 }
                 db.insertWithOnConflict(
                     "photos", null, values, SQLiteDatabase.CONFLICT_REPLACE
