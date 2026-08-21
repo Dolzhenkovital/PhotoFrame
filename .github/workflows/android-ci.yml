@@ -38,7 +38,25 @@ jobs:
       - name: Android Lint
         run: gradle lintDebug
 
+      # Optional shared debug key: lets the artifact APK pass Google Photos
+      # sign-in (the OAuth client is matched by signing SHA-1; a random
+      # runner-generated debug key would not match).
+      - name: Use shared debug keystore when provided
+        id: debug_keystore
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$DEBUG_KEYSTORE_BASE64" ]; then
+            printf '%s' "$DEBUG_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/debug.keystore"
+            echo "path=$RUNNER_TEMP/debug.keystore" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=" >> "$GITHUB_OUTPUT"
+            echo "::notice::DEBUG_KEYSTORE_BASE64 not set — the artifact APK gets a random debug key, so Google Photos sign-in will not match the OAuth client."
+          fi
+
       - name: Assemble debug APK
+        env:
+          DEBUG_KEYSTORE_PATH: ${{ steps.debug_keystore.outputs.path }}
         run: gradle assembleDebug
 
       - name: Upload debug APK

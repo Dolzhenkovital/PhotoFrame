@@ -35,6 +35,24 @@ android {
         }
     }
 
+    // Optional: CI signs DEBUG builds with the developer's own debug
+    // keystore. Google matches the Photos OAuth client by package + signing
+    // SHA-1, and every ephemeral CI runner otherwise invents a random debug
+    // key — artifact APKs would install fine but fail Google sign-in.
+    // Standard AOSP debug-keystore credentials by definition.
+    val debugKeystorePath = System.getenv("DEBUG_KEYSTORE_PATH")
+        ?.takeIf { it.isNotBlank() }
+    if (debugKeystorePath != null) {
+        signingConfigs {
+            getByName("debug") {
+                storeFile = file(debugKeystorePath)
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
