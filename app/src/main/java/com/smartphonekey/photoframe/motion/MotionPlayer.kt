@@ -12,8 +12,6 @@ import android.view.Surface
 import android.view.TextureView
 import com.smartphonekey.photoframe.core.PhotoItem
 import java.util.concurrent.Executor
-import kotlin.math.max
-import kotlin.math.min
 
 /**
  * Plays a motion photo's embedded video once, muted, over the still.
@@ -201,21 +199,11 @@ class MotionPlayer(
     private fun applyTransform(videoWidth: Int, videoHeight: Int, fillScreen: Boolean) {
         val viewWidth = textureView.width.toFloat()
         val viewHeight = textureView.height.toFloat()
-        if (viewWidth <= 0 || viewHeight <= 0 || videoWidth <= 0 || videoHeight <= 0) return
-        // TextureView stretches video to the view by default; the transform
-        // rescales relative to that stretched state around the center.
-        val scale = if (fillScreen) {
-            max(viewWidth / videoWidth, viewHeight / videoHeight)
-        } else {
-            min(viewWidth / videoWidth, viewHeight / videoHeight)
-        }
+        val scale = VideoTransform.compute(
+            viewWidth, viewHeight, videoWidth.toFloat(), videoHeight.toFloat(), fillScreen
+        ) ?: return
         val matrix = Matrix()
-        matrix.setScale(
-            videoWidth * scale / viewWidth,
-            videoHeight * scale / viewHeight,
-            viewWidth / 2f,
-            viewHeight / 2f,
-        )
+        matrix.setScale(scale.sx, scale.sy, viewWidth / 2f, viewHeight / 2f)
         textureView.setTransform(matrix)
     }
 

@@ -107,14 +107,25 @@ class PhotoScanner(private val resolver: ContentResolver) {
             }
             if (width <= 0) {
                 // Rare: dimensions live past the head (huge embedded
-                // thumbnail). Fall back to a full-stream bounds decode; the
-                // rotation read above still applies to these bounds.
+                // thumbnail). Fall back to a full-stream bounds decode.
                 resolver.openInputStream(Uri.parse(uri))?.use { stream ->
                     val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     BitmapFactory.decodeStream(stream, null, options)
                     if (options.outWidth > 0 && options.outHeight > 0) {
                         width = options.outWidth
                         height = options.outHeight
+                    }
+                }
+                // If the SOF was not in the head, the EXIF APP1 may not have
+                // been either — this file's metadata layout is unusual, so
+                // re-read orientation from the full stream like the bounds.
+                if (width > 0 && rotation == 0) {
+                    rotation = try {
+                        resolver.openInputStream(Uri.parse(uri))?.use { stream ->
+                            ExifInterface(stream).rotationDegrees
+                        } ?: 0
+                    } catch (e: Exception) {
+                        0
                     }
                 }
             }
