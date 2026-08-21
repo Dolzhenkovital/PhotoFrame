@@ -62,6 +62,25 @@ jobs:
           PY
           probe "tiny request (~100 B)" tiny.json
 
+          # 2b. Alternative models — is the whole service down, or one family?
+          for alt in gpt-5.6-sol gpt-5.6-luna gpt-5.6-luna-medium gpt-5.6-terra gpt-5.5-medium; do
+            python3 - "$alt" <<'PY' > alt.json
+          import json, sys
+          json.dump({
+            "model": sys.argv[1],
+            "messages": [{"role": "user", "content": "Reply with the single word: ok"}],
+            "max_completion_tokens": 2000,
+          }, open("/dev/stdout", "w"))
+          PY
+            code=$(curl -s -o alt_resp.json -w '%{http_code}' --max-time 120 \
+              -X POST "$base/chat/completions" \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $OPENAI_API_KEY" \
+              --data-binary @alt.json || echo "000")
+            echo "== alt model $alt -> HTTP $code"
+          done
+          echo
+
           # 3. Large request — does a review-sized payload get rejected?
           python3 - <<'PY' > large.json
           import json, os
