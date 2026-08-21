@@ -78,34 +78,32 @@ class PhotoScanner(private val resolver: ContentResolver) {
     private fun inspect(uri: String, name: String, size: Long, mtime: Long): PhotoItem {
         var width = 0
         var height = 0
+        var rotation = 0
         var motion: MotionPhotoDetector.Result? = null
         try {
             val headLength = readHead(uri)
             if (headLength > 0) {
+                // EXIF (APP1) sits right after the JPEG SOI marker, so the
+                // head buffer has it even when the DIMENSIONS live further
+                // in — read rotation independently of where bounds come from.
+                rotation = try {
+                    ExifInterface(ByteArrayInputStream(headBuffer, 0, headLength))
+                        .rotationDegrees
+                } catch (e: Exception) {
+                    0 // truncated/absent EXIF in the head → no rotation
+                }
                 val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeByteArray(headBuffer, 0, headLength, options)
                 if (options.outWidth > 0 && options.outHeight > 0) {
                     width = options.outWidth
                     height = options.outHeight
                 }
-                if (width > 0) {
-                    val rotation = try {
-                        ExifInterface(ByteArrayInputStream(headBuffer, 0, headLength))
-                            .rotationDegrees
-                    } catch (e: Exception) {
-                        0 // truncated/absent EXIF in the head → no rotation
-                    }
-                    if (rotation == 90 || rotation == 270) {
-                        val t = width
-                        width = height
-                        height = t
-                    }
-                }
                 motion = MotionPhotoDetector.detect(headBuffer, headLength, size)
             }
             if (width <= 0) {
                 // Rare: dimensions live past the head (huge embedded
-                // thumbnail). Fall back to a full-stream bounds decode.
+                // thumbnail). Fall back to a full-stream bounds decode; the
+                // rotation read above still applies to these bounds.
                 resolver.openInputStream(Uri.parse(uri))?.use { stream ->
                     val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     BitmapFactory.decodeStream(stream, null, options)
@@ -114,6 +112,11 @@ class PhotoScanner(private val resolver: ContentResolver) {
                         height = options.outHeight
                     }
                 }
+            }
+            if (width > 0 && (rotation == 90 || rotation == 270)) {
+                val t = width
+                width = height
+                height = t
             }
         } catch (e: Exception) {
             // Unreadable file: dims stay 0 → classified SQUARE, shown anyway.
@@ -136,7 +139,9 @@ class PhotoScanner(private val resolver: ContentResolver) {
             var filled = 0
             while (filled < headBuffer.size) {
                 val read = stream.read(headBuffer, filled, headBuffer.size - filled)
-                if (read < 0) break
+                // <= 0: EOF, or a misbehaving provider returning 0 for a
+                // non-empty request — either way looping again cannot help.
+                if (read <= 0) break
                 filled += read
             }
             filled

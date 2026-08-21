@@ -49,10 +49,13 @@ object MotionPhotoDetector {
 
     fun detect(head: ByteArray, headLength: Int, fileLength: Long): Result? {
         if (fileLength <= 0 || headLength <= 0) return null
-        if (!containsMarker(head, headLength)) return null
+        // A pure detector never throws on caller mistakes — an oversized
+        // length is clamped to what actually exists in the buffer.
+        val length = headLength.coerceAtMost(head.size)
+        if (!containsMarker(head, length)) return null
         // XMP is ASCII-safe XML embedded in binary; Latin-1 maps every byte
         // 1:1 so the regexes see the markers without charset guessing.
-        val text = String(head, 0, headLength, Charsets.ISO_8859_1)
+        val text = String(head, 0, length, Charsets.ISO_8859_1)
 
         val motionPhotoFlag = MOTION_PHOTO_FLAG.containsMatchIn(text)
         // Modern format first — files can carry both markers for backward

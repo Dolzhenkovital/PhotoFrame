@@ -99,6 +99,14 @@ class MotionPhotoDetectorTest {
     }
 
     @Test
+    fun `oversized headLength is clamped, not thrown`() {
+        val bytes = head("""GCamera:MicroVideo="1" GCamera:MicroVideoOffset="4000"""")
+        val result = MotionPhotoDetector.detect(bytes, bytes.size + 500, 10_000)!!
+        assertEquals(6_000L, result.videoOffsetBytes)
+        assertNull(MotionPhotoDetector.detect(ByteArray(8), 9_999, 10_000))
+    }
+
+    @Test
     fun `corrupt metadata is rejected`() {
         val flagged = """GCamera:MicroVideo="1" GCamera:MicroVideoOffset="""
         // Video "longer" than the file itself.
