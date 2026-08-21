@@ -82,7 +82,10 @@ object MotionPhotoDetector {
         var index = text.indexOf("Container:Item")
         while (index >= 0) {
             val next = text.indexOf("Container:Item", index + 1)
-            val end = if (next >= 0) next else minOf(text.length, index + 2000)
+            // The last segment runs to the end of the (already head-bounded)
+            // text — an arbitrary cutoff could truncate a legally verbose
+            // item and miss its attributes.
+            val end = if (next >= 0) next else text.length
             val segment = text.substring(index, end)
             if (VIDEO_MIME.containsMatchIn(segment)) {
                 return ITEM_LENGTH.find(segment)?.number()

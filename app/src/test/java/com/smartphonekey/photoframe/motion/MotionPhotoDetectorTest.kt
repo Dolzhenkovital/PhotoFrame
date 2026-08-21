@@ -83,6 +83,16 @@ class MotionPhotoDetectorTest {
     }
 
     @Test
+    fun `v1 item with attributes spread far apart still parses`() {
+        // Verbose-but-legal XMP: kilobytes of whitespace inside one item.
+        val filler = " ".repeat(3_000)
+        val xmp = """GCamera:MotionPhoto="1"""" +
+            """<Container:Item Item:Mime="video/mp4"$filler Item:Length="3000"/>"""
+        val result = detect(xmp, fileLength = 10_000)!!
+        assertEquals(3_000L, result.videoLengthBytes)
+    }
+
+    @Test
     fun `single quotes and whitespace around equals are legal XML`() {
         val result = detect(
             """<rdf:Description GCamera:MotionPhoto = '1'>

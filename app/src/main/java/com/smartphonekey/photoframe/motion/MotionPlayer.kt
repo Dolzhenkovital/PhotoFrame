@@ -128,8 +128,20 @@ class MotionPlayer(
                 }
                 mediaPlayer.setOnPreparedListener {
                     if (token != playToken) return@setOnPreparedListener
-                    textureView.animate().alpha(1f).setDuration(FADE_MS).start()
-                    mediaPlayer.start()
+                    // No fade yet: prepared ≠ a decoded frame. Showing the
+                    // layer now would cover the still with black.
+                    runCatching { mediaPlayer.start() }
+                        .onFailure { releasePlayer() }
+                }
+                mediaPlayer.setOnInfoListener { _, what, _ ->
+                    // Only reveal the video layer once the first frame has
+                    // actually rendered — the still stays otherwise.
+                    if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START &&
+                        token == playToken
+                    ) {
+                        textureView.animate().alpha(1f).setDuration(FADE_MS).start()
+                    }
+                    false
                 }
                 mediaPlayer.setOnCompletionListener {
                     if (token == playToken) fadeOutAndRelease()
@@ -139,6 +151,14 @@ class MotionPlayer(
                     true // handled — never surface a dialog
                 }
                 mediaPlayer.prepareAsync()
+                // Watchdog: a codec that never produces a frame (partially
+                // corrupt trailer) must not hold the player until the next
+                // slide — release it; the layer is still invisible anyway.
+                mainHandler.postDelayed({
+                    if (token == playToken && textureView.alpha == 0f) {
+                        releasePlayer()
+                    }
+                }, RENDER_TIMEOUT_MS)
             } catch (e: Exception) {
                 stop() // still photo remains — exactly the intended fallback
             }
@@ -149,6 +169,7 @@ class MotionPlayer(
     fun stop() {
         playToken++
         pendingItem = null
+        mainHandler.removeCallbacksAndMessages(null) // pending starts, watchdog
         textureView.animate().cancel()
         textureView.alpha = 0f
         releasePlayer()
@@ -192,5 +213,6 @@ class MotionPlayer(
 
     private companion object {
         const val FADE_MS = 150L
+        const val RENDER_TIMEOUT_MS = 3_000L
     }
 }
