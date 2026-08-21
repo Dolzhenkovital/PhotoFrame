@@ -168,11 +168,14 @@ class GPhotosCache(context: Context) : PhotoStore {
         val entries = db.listAll().map {
             CacheEviction.Entry(it.fileName, it.sizeBytes, it.lastShownAt, it.downloadedAt)
         }
-        for (name in CacheEviction.selectVictims(entries, capBytes)) {
+        val plan = CacheEviction.plan(entries, capBytes)
+        for (name in plan.victimIds) {
             File(mediaDir, name).delete()
             db.delete(name)
         }
-        return CacheEviction.capTooSmall(entries, capBytes)
+        // Judged from what actually remains on disk: the minKeep floor can
+        // legitimately leave the retained set over the cap.
+        return plan.retainedBytes > capBytes
     }
 
     fun totalBytes(): Long = db.listAll().sumOf { it.sizeBytes }

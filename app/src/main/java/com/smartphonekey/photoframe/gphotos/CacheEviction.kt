@@ -17,21 +17,30 @@ object CacheEviction {
     )
 
     /**
-     * Returns ids to delete, least-recently-USED first, until the total fits
+     * [retainedBytes] is what the cache will actually hold after deleting
+     * [victimIds] — the "cache too small" signal must be judged from it, not
+     * from any hypothetical smallest subset: LRU chooses what stays by
+     * recency, not by size, so the retained set can exceed the cap even when
+     * some other combination of files would have fit.
+     */
+    data class Plan(val victimIds: List<String>, val retainedBytes: Long)
+
+    /**
+     * Plans an eviction: least-recently-USED first, until the total fits
      * [capBytes] — but never shrinking the set below [minKeep] items when
      * more than [minKeep] exist (better an over-budget cache than a frame
-     * showing three photos in a loop; the caller surfaces "cache too small").
+     * showing three photos in a loop; the caller surfaces "cache too small"
+     * when the plan's retainedBytes still exceed the cap).
      *
      * "Used" is max(lastShownAt, downloadedAt): a freshly downloaded photo
      * that has not been shown yet must not be the first eviction victim.
      */
-    fun selectVictims(
+    fun plan(
         entries: List<Entry>,
         capBytes: Long,
         minKeep: Int = MIN_KEEP,
-    ): List<String> {
+    ): Plan {
         var total = entries.sumOf { it.sizeBytes }
-        if (total <= capBytes) return emptyList()
         val victims = ArrayList<String>()
         var remaining = entries.size
         for (entry in entries.sortedBy { maxOf(it.lastShownAt, it.downloadedAt) }) {
@@ -40,15 +49,6 @@ object CacheEviction {
             total -= entry.sizeBytes
             remaining--
         }
-        return victims
-    }
-
-    /** True when the cap cannot hold [entries] even after full eviction. */
-    fun capTooSmall(entries: List<Entry>, capBytes: Long, minKeep: Int = MIN_KEEP): Boolean {
-        if (entries.size <= minKeep) {
-            return entries.sumOf { it.sizeBytes } > capBytes
-        }
-        val smallestKeep = entries.map { it.sizeBytes }.sorted().take(minKeep).sum()
-        return smallestKeep > capBytes
+        return Plan(victims, total)
     }
 }

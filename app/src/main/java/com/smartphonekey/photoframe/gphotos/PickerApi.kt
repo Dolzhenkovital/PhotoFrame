@@ -66,26 +66,40 @@ class PickerApi(
      * old frame needs (google-photos-picker skill).
      */
     override fun download(token: String, item: PickedItem, maxDimension: Int, target: File) {
-        // Last line of defence before the bearer token leaves the device:
-        // parsing already filters items, but this is the only place the
-        // token is actually attached, so it re-checks the host itself.
-        if (!PickerUris.isTrustedMediaBaseUrl(item.baseUrl)) {
-            throw ApiException(0, "refusing to send credentials to ${item.baseUrl}")
-        }
-        val url = "${item.baseUrl}=w$maxDimension-h$maxDimension"
-        val conn = open("GET", url, token)
-        try {
-            val code = conn.responseCode
-            if (code !in 200..299) {
-                throw ApiException(code, readError(conn))
+        // Redirects are followed by hand: HttpURLConnection would re-send the
+        // Authorization header to whatever host a redirect names, so every
+        // hop — the first URL included — is validated before the token is
+        // attached to a connection.
+        var url = "${item.baseUrl}=w$maxDimension-h$maxDimension"
+        var hops = 0
+        while (true) {
+            if (!PickerUris.isTrustedMediaBaseUrl(url)) {
+                throw ApiException(0, "refusing to send credentials to untrusted host")
             }
-            conn.inputStream.use { input ->
-                target.outputStream().use { output ->
-                    input.copyTo(output, bufferSize = 64 * 1024)
+            val conn = open("GET", url, token)
+            try {
+                val code = conn.responseCode
+                if (code in REDIRECT_CODES) {
+                    val location = conn.getHeaderField("Location")
+                        ?: throw ApiException(code, "redirect without Location")
+                    if (++hops > MAX_REDIRECTS) {
+                        throw ApiException(code, "too many redirects")
+                    }
+                    url = URL(URL(url), location).toString() // resolves relative
+                    continue
                 }
+                if (code !in 200..299) {
+                    throw ApiException(code, readError(conn))
+                }
+                conn.inputStream.use { input ->
+                    target.outputStream().use { output ->
+                        input.copyTo(output, bufferSize = 64 * 1024)
+                    }
+                }
+                return
+            } finally {
+                conn.disconnect()
             }
-        } finally {
-            conn.disconnect()
         }
     }
 
@@ -98,10 +112,19 @@ class PickerApi(
                 conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
             }
             val code = conn.responseCode
+            if (code in REDIRECT_CODES) {
+                // The Picker API itself never redirects; if one shows up,
+                // something is intercepting the connection — do not follow it
+                // with a bearer token attached.
+                throw ApiException(code, "unexpected redirect from API endpoint")
+            }
             if (code !in 200..299) {
                 throw ApiException(code, readError(conn))
             }
-            return conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+            return conn.inputStream.use {
+                readBounded(it, MAX_JSON_BYTES, failOnExceed = true)
+                    .toString(Charsets.UTF_8)
+            }
         } finally {
             conn.disconnect()
         }
@@ -109,6 +132,9 @@ class PickerApi(
 
     private fun open(method: String, url: String, token: String): HttpURLConnection {
         val conn = URL(url).openConnection() as HttpURLConnection
+        // Redirect handling is manual everywhere a token is attached — see
+        // download() and the REDIRECT_CODES check in request().
+        conn.instanceFollowRedirects = false
         conn.requestMethod = method
         conn.connectTimeout = 15_000
         conn.readTimeout = 60_000
@@ -117,15 +143,47 @@ class PickerApi(
     }
 
     private fun readError(conn: HttpURLConnection): String = try {
-        conn.errorStream?.use { it.readBytes().toString(Charsets.UTF_8) }
-            ?.take(500) ?: "(no error body)"
+        conn.errorStream?.use {
+            readBounded(it, MAX_ERROR_BYTES, failOnExceed = false)
+                .toString(Charsets.UTF_8)
+        }?.take(500) ?: "(no error body)"
     } catch (e: IOException) {
         "(unreadable error body)"
+    }
+
+    /**
+     * Reads at most [maxBytes]. Responses are untrusted and the frames are
+     * low-RAM, so an unbounded readBytes() on a hostile payload could OOM
+     * the app; JSON bodies over the limit fail, error bodies just truncate.
+     */
+    private fun readBounded(
+        stream: java.io.InputStream,
+        maxBytes: Int,
+        failOnExceed: Boolean,
+    ): ByteArray {
+        val buffer = java.io.ByteArrayOutputStream()
+        val chunk = ByteArray(16 * 1024)
+        while (true) {
+            val read = stream.read(chunk)
+            if (read < 0) break
+            val room = maxBytes - buffer.size()
+            if (read > room) {
+                if (failOnExceed) throw IOException("response body exceeds $maxBytes bytes")
+                buffer.write(chunk, 0, room)
+                break
+            }
+            buffer.write(chunk, 0, read)
+        }
+        return buffer.toByteArray()
     }
 
     companion object {
         private const val TAG = "PickerApi"
         private const val MAX_PAGES = 100 // 10k items — far beyond picker limits
+        private const val MAX_REDIRECTS = 5
+        private const val MAX_JSON_BYTES = 2_000_000 // a 100-item page is ~100 KB
+        private const val MAX_ERROR_BYTES = 64 * 1024
+        private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
 
         /**
          * Page tokens are opaque base64-ish strings that routinely contain
