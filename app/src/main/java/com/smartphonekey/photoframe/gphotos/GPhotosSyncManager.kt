@@ -206,11 +206,11 @@ class GPhotosSyncManager(
 
             // A stale run must not report success: cancel() already moved the
             // state to Idle (or a newer run owns it now). Photos downloaded
-            // before the cancel stay — they are complete and indexed.
-            if (gen != generation) {
-                deleteQuietly(token, sessionId)
-                return
-            }
+            // before the cancel stay — they are complete and indexed. No
+            // session cleanup here: by the time a download run can be stale,
+            // cancel() has already deleted the session it knew about —
+            // deleting again would be a second authenticated request.
+            if (gen != generation) return
 
             api.deleteSession(token, sessionId)
             val capTooSmall = cache.evictToCap(cacheCapBytes())
@@ -226,7 +226,9 @@ class GPhotosSyncManager(
     }
 
     private fun failWith(gen: Int, token: String, sessionId: String?, e: Exception) {
-        if (sessionId != null) deleteQuietly(token, sessionId)
+        // Only the generation that still owns the run cleans up its session;
+        // for a stale run cancel() has already done it.
+        if (sessionId != null && gen == generation) deleteQuietly(token, sessionId)
         post {
             if (gen != generation) return@post
             clearActive()

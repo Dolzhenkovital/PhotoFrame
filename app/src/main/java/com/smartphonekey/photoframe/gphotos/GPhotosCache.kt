@@ -170,11 +170,23 @@ class GPhotosCache(context: Context) : PhotoStore {
         }
         val plan = CacheEviction.plan(entries, capBytes)
         for (name in plan.victimIds) {
-            File(mediaDir, name).delete()
-            db.delete(name)
+            val file = File(mediaDir, name)
+            // Drop the row only once the bytes are really gone — otherwise
+            // the file would survive on disk while every future plan counts
+            // it as deleted, and the cache would silently exceed its cap
+            // until a restart sweep. A failed delete stays indexed and gets
+            // retried on the next eviction pass.
+            if (file.delete() || !file.exists()) {
+                db.delete(name)
+            }
         }
         // Judged from what actually remains on disk: the minKeep floor can
         // legitimately leave the retained set over the cap.
+        // Note on the slideshow: flush() above pushed the freshest
+        // last-shown timestamps, so the photo currently on screen (and
+        // recently shown ones) sort to the very back of the victim list. If
+        // the preloaded-next file does get evicted mid-display, the
+        // controller's failure path just skips to the next photo.
         return plan.retainedBytes > capBytes
     }
 
