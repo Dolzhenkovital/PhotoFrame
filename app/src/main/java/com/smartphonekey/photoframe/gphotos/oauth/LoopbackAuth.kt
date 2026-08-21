@@ -313,8 +313,11 @@ class LoopbackAuth(
 
     private companion object {
         const val TAG = "LoopbackAuth"
-        const val ACCEPT_TIMEOUT_MS = 5 * 60 * 1000 // one accept() wait
-        const val FLOW_TIMEOUT_MS = 5 * 60 * 1000L // whole consent window
+        // 10 minutes, measured against reality: the first sign-in on a frame
+        // means typing a password on a touch panel, maybe adding a Test user
+        // in another room — 5 minutes was observed to expire mid-consent.
+        const val ACCEPT_TIMEOUT_MS = 10 * 60 * 1000 // one accept() wait
+        const val FLOW_TIMEOUT_MS = 10 * 60 * 1000L // whole consent window
         const val SOCKET_READ_TIMEOUT_MS = 10 * 1000
         const val HTTP_TIMEOUT_MS = 30 * 1000
 
