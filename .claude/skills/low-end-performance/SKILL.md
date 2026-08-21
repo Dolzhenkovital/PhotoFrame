@@ -18,7 +18,8 @@ Every rule below exists because breaking it visibly hurts that device.
 ## Dependency policy (the strongest lever)
 
 - Allowed baseline: `core-ktx`, `appcompat`, `preference`, `exifinterface`,
-  Glide, `play-services-auth` (Google source only). Everything else needs a
+  Glide, `play-services-auth` (Google source only), `zxing:core` (QR for the
+  picker URI — pure Java, no transitive deps). Everything else needs a
   written justification in the PR description.
 - Banned outright: Jetpack Compose (RAM/APK cost), Hilt/Dagger (use manual
   constructor injection — the app has ~10 classes that need wiring), RxJava,

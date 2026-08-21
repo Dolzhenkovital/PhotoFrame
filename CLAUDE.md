@@ -53,7 +53,8 @@ weak devices (Android 6.0+, ~1 GB RAM).
 
 - [x] Phase 0 — infrastructure: skeleton, skills, CI/CD with LLM review
 - [x] Phase 1 — slideshow core: local photos (SAF), queue, timer, transitions, settings screen
-- [ ] Phase 2 — Google Photos: OAuth, picker (QR flow), cache + sync
+- [x] Phase 2 — Google Photos: OAuth, picker (QR flow), cache + sync
+      (needs a one-time Google Cloud console setup by the owner — see README)
 - [ ] Phase 3 — motion photos, polish (Ken Burns, fill-crop toggle), release workflow
 
 Implementation starts only after explicit go-ahead from the owner.

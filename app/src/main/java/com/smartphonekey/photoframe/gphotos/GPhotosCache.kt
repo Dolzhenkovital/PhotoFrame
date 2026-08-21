@@ -1,0 +1,381 @@
+package com.smartphonekey.photoframe.gphotos
+
+import android.content.ContentValues
+import android.content.Context
+import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteOpenHelper
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.os.Environment
+import com.smartphonekey.photoframe.core.PhotoItem
+import java.io.File
+import java.security.MessageDigest
+
+/**
+ * Disk cache for photos downloaded from Google Photos (caching.md design):
+ * app-private dir (external when mounted — often an SD card on frames),
+ * SQLite index as the single source of truth, tmp+rename crash safety,
+ * LRU eviction against the user-set cap.
+ */
+class GPhotosCache(context: Context) : PhotoStore {
+
+    private val appContext = context.applicationContext
+    private val db = Db(appContext)
+    private val pendingShown = HashMap<String, Long>() // file_name → timestamp
+
+    override val mediaDir: File by lazy {
+        // External storage is preferred (frames often have their space on an
+        // SD card), but only when the volume is actually MOUNTED and the
+        // directory can really be created — a non-null getExternalFilesDir()
+        // alone proves neither. Anything else falls back to internal so
+        // downloads have a working destination instead of failing forever.
+        val external = appContext.getExternalFilesDir("gphotos")
+        var dir: File? = null
+        if (external != null &&
+            Environment.getExternalStorageState(external) == Environment.MEDIA_MOUNTED
+        ) {
+            val candidate = File(external, "media")
+            if (candidate.mkdirs() || candidate.isDirectory) {
+                dir = candidate
+                onExternalStorage = true
+            }
+        }
+        if (dir == null) {
+            dir = File(File(appContext.filesDir, "gphotos"), "media")
+            dir.mkdirs()
+            onExternalStorage = false
+        }
+        // Cached so noteShown() can check ownership on the main thread
+        // without touching the filesystem.
+        mediaDirPath = dir.absolutePath
+        dir
+    }
+
+    @Volatile
+    private var mediaDirPath: String? = null
+
+    @Volatile
+    private var onExternalStorage = false
+
+    /**
+     * External app-private storage is often an SD card on frames — and SD
+     * cards get ejected. While the volume is away, directory listings return
+     * null and File.exists() is false for every cached file; taking that at
+     * face value would wipe the index and orphan the entire cache. Any
+     * maintenance that deletes rows or files must be skipped until the
+     * volume is back.
+     */
+    private fun storageReady(): Boolean =
+        !onExternalStorage ||
+            Environment.getExternalStorageState(mediaDir) == Environment.MEDIA_MOUNTED
+
+    /** Startup sweep: drop *.tmp and heal file↔row mismatches. Call on IO thread. */
+    fun sweep() {
+        if (!storageReady()) return
+        // A null listing means the directory is unreadable RIGHT NOW, not
+        // that it is empty — touching the index in that state would destroy
+        // a healthy cache.
+        val listing = mediaDir.listFiles() ?: return
+        val files = listing.associateBy { it.name }
+        files.values.filter { it.name.endsWith(".tmp") }.forEach { it.delete() }
+        val rows = db.listAll()
+        val rowNames = rows.mapTo(HashSet()) { it.fileName }
+        files.values
+            .filter { !it.name.endsWith(".tmp") && it.name !in rowNames }
+            .forEach { it.delete() }
+        rows.filter { it.fileName !in files }
+            .forEach { db.delete(it.fileName) }
+    }
+
+    override fun fileNameFor(item: PickedItem): String {
+        val digest = MessageDigest.getInstance("SHA-1")
+            .digest(item.id.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        val ext = when (item.mimeType) {
+            "image/png" -> ".png"
+            "image/webp" -> ".webp"
+            else -> ".jpg" // sized baseUrl downloads are JPEG-transcoded
+        }
+        return digest + ext
+    }
+
+    // Row AND file: after an SD remount or external deletion a row can
+    // outlive its bytes — trusting it alone would skip re-downloading a
+    // photo that is actually gone. Called on the sync IO thread, so the
+    // extra stat() is fine.
+    override fun contains(item: PickedItem): Boolean {
+        val name = fileNameFor(item)
+        return db.exists(name) && File(mediaDir, name).exists()
+    }
+
+    /**
+     * Moves a fully-downloaded tmp file into place and indexes it.
+     * Dimensions are measured from the actual bytes — server-side resizing
+     * bakes in EXIF rotation, so a bounds decode is the ground truth.
+     *
+     * A bounds decode that yields nothing means the bytes are not an image
+     * at all (an HTML/JSON error body served with a 2xx, or a truncated
+     * response). Such a file must never enter the index: the slideshow would
+     * queue it as displayable and then fail on it forever. Unlike the local
+     * source — where an unreadable file is still the user's own file worth
+     * attempting — here we control the download and can simply drop it.
+     */
+    override fun commit(item: PickedItem, tmp: File, now: Long): Boolean {
+        val name = fileNameFor(item)
+        val final = File(mediaDir, name)
+        if (!tmp.renameTo(final)) {
+            tmp.delete()
+            return false
+        }
+        var width = 0
+        var height = 0
+        try {
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(final.absolutePath, options)
+            if (options.outWidth > 0 && options.outHeight > 0) {
+                width = options.outWidth
+                height = options.outHeight
+            }
+        } catch (e: Exception) {
+            // Leaves width/height at 0 — handled as "not an image" below.
+        }
+        if (width <= 0 || height <= 0) {
+            final.delete()
+            return false
+        }
+        return try {
+            db.upsert(
+                Db.Row(
+                    fileName = name,
+                    itemId = item.id,
+                    mime = item.mimeType,
+                    width = width,
+                    height = height,
+                    sizeBytes = final.length(),
+                    downloadedAt = now,
+                    lastShownAt = 0L,
+                )
+            )
+            true
+        } catch (e: Exception) {
+            // The file exists but is unreachable without an index row; drop it
+            // now rather than leaving an orphan for the next startup sweep.
+            final.delete()
+            false
+        }
+    }
+
+    fun loadAllAsPhotoItems(): List<PhotoItem> = db.listAll().map { row ->
+        PhotoItem(
+            uri = Uri.fromFile(File(mediaDir, row.fileName)).toString(),
+            displayName = row.fileName,
+            sizeBytes = row.sizeBytes,
+            lastModified = row.downloadedAt,
+            width = row.width,
+            height = row.height,
+        )
+    }
+
+    fun photoCount(): Int = db.count()
+
+    /**
+     * Slideshow hook — called on the MAIN thread, so it only records into a
+     * map; flush() (background thread) writes the batch out (caching.md rule:
+     * no DB write per slide on weak flash).
+     */
+    fun noteShown(uri: String, now: Long) {
+        // Only our own cache files carry LRU timestamps. Matching on the real
+        // parent directory (not a substring) keeps a local photo that merely
+        // lives in some "gphotos" folder from corrupting the index. If the
+        // cache dir has not been resolved yet, nothing from it can be on
+        // screen either, so skipping is correct.
+        val dirPath = mediaDirPath ?: return
+        val path = Uri.parse(uri).takeIf { it.scheme == "file" }?.path ?: return
+        val file = File(path)
+        if (file.parent != dirPath) return
+        synchronized(pendingShown) { pendingShown[file.name] = now }
+    }
+
+    /** Call from a background thread (onPause path or before eviction). */
+    fun flush() {
+        val batch: Map<String, Long>
+        synchronized(pendingShown) {
+            if (pendingShown.isEmpty()) return
+            batch = HashMap(pendingShown)
+            pendingShown.clear()
+        }
+        db.updateLastShown(batch)
+    }
+
+    /** Applies the LRU policy; returns true when the cap is too small. */
+    override fun evictToCap(capBytes: Long): Boolean {
+        flush()
+        // With the volume ejected, File.delete() fails and !exists() is
+        // trivially true for everything — the loop below would drop every
+        // index row while the bytes still exist on the card. Do nothing;
+        // the next eviction after remount converges.
+        if (!storageReady()) return false
+        val entries = db.listAll().map {
+            CacheEviction.Entry(it.fileName, it.sizeBytes, it.lastShownAt, it.downloadedAt)
+        }
+        val plan = CacheEviction.plan(entries, capBytes)
+        val sizeByName = entries.associate { it.id to it.sizeBytes }
+        var retainedBytes = plan.retainedBytes
+        for (name in plan.victimIds) {
+            val file = File(mediaDir, name)
+            // Drop the row only once the bytes are really gone — otherwise
+            // the file would survive on disk while every future plan counts
+            // it as deleted, and the cache would silently exceed its cap
+            // until a restart sweep. A failed delete stays indexed, counts
+            // back into the retained total, and is retried next pass.
+            if (file.delete() || !file.exists()) {
+                db.delete(name)
+            } else {
+                retainedBytes = CacheEviction.addBackFailedVictim(
+                    retainedBytes, sizeByName[name] ?: 0L
+                )
+            }
+        }
+        // Judged from what actually remains on disk (plan + any failed
+        // deletions): the minKeep floor can legitimately leave the retained
+        // set over the cap.
+        // Note on the slideshow: flush() above pushed the freshest
+        // last-shown timestamps, so the photo currently on screen (and
+        // recently shown ones) sort to the very back of the victim list. If
+        // the preloaded-next file does get evicted mid-display, the
+        // controller's failure path just skips to the next photo.
+        return retainedBytes > capBytes
+    }
+
+    fun totalBytes(): Long = db.listAll().sumOf { it.sizeBytes }
+
+    fun clearAll() {
+        synchronized(pendingShown) { pendingShown.clear() }
+        if (!storageReady()) return
+        // Unreadable listing ≠ empty directory: wiping the index over it
+        // would orphan every file on disk (uncounted by the cap, forever).
+        val listing = mediaDir.listFiles() ?: return
+        // Row by row, mirroring eviction: an index row disappears only once
+        // its bytes are confirmed gone, so a failed delete stays indexed and
+        // is retried by the next clear/eviction instead of leaking storage.
+        for (row in db.listAll()) {
+            val file = File(mediaDir, row.fileName)
+            if (file.delete() || !file.exists()) db.delete(row.fileName)
+        }
+        // Best-effort cleanup of files that never had a row (tmp leftovers).
+        val survivors = db.listAll().mapTo(HashSet()) { it.fileName }
+        listing.filter { it.name !in survivors }.forEach { it.delete() }
+    }
+
+    private class Db(context: Context) :
+        SQLiteOpenHelper(context, "gphotos_cache.db", null, 1) {
+
+        data class Row(
+            val fileName: String,
+            val itemId: String,
+            val mime: String,
+            val width: Int,
+            val height: Int,
+            val sizeBytes: Long,
+            val downloadedAt: Long,
+            val lastShownAt: Long,
+        )
+
+        override fun onCreate(db: SQLiteDatabase) {
+            db.execSQL(
+                """CREATE TABLE media (
+                    file_name TEXT PRIMARY KEY,
+                    item_id TEXT NOT NULL,
+                    mime TEXT NOT NULL,
+                    width INTEGER NOT NULL DEFAULT 0,
+                    height INTEGER NOT NULL DEFAULT 0,
+                    size_bytes INTEGER NOT NULL,
+                    downloaded_at INTEGER NOT NULL,
+                    last_shown_at INTEGER NOT NULL DEFAULT 0
+                )"""
+            )
+            db.execSQL("CREATE INDEX idx_item ON media(item_id)")
+        }
+
+        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+            db.execSQL("DROP TABLE IF EXISTS media")
+            onCreate(db)
+        }
+
+        fun upsert(row: Row) {
+            val values = ContentValues().apply {
+                put("file_name", row.fileName)
+                put("item_id", row.itemId)
+                put("mime", row.mime)
+                put("width", row.width)
+                put("height", row.height)
+                put("size_bytes", row.sizeBytes)
+                put("downloaded_at", row.downloadedAt)
+                put("last_shown_at", row.lastShownAt)
+            }
+            writableDatabase.insertWithOnConflict(
+                "media", null, values, SQLiteDatabase.CONFLICT_REPLACE
+            )
+        }
+
+        fun exists(fileName: String): Boolean =
+            readableDatabase.rawQuery(
+                "SELECT 1 FROM media WHERE file_name = ?", arrayOf(fileName)
+            ).use { it.moveToFirst() }
+
+        fun listAll(): List<Row> {
+            val out = ArrayList<Row>()
+            readableDatabase.rawQuery(
+                """SELECT file_name, item_id, mime, width, height,
+                          size_bytes, downloaded_at, last_shown_at FROM media""",
+                null
+            ).use { c ->
+                while (c.moveToNext()) {
+                    out.add(
+                        Row(
+                            fileName = c.getString(0),
+                            itemId = c.getString(1),
+                            mime = c.getString(2),
+                            width = c.getInt(3),
+                            height = c.getInt(4),
+                            sizeBytes = c.getLong(5),
+                            downloadedAt = c.getLong(6),
+                            lastShownAt = c.getLong(7),
+                        )
+                    )
+                }
+            }
+            return out
+        }
+
+        fun count(): Int =
+            readableDatabase.rawQuery("SELECT COUNT(*) FROM media", null).use { c ->
+                if (c.moveToFirst()) c.getInt(0) else 0
+            }
+
+        fun updateLastShown(batch: Map<String, Long>) {
+            val db = writableDatabase
+            db.beginTransaction()
+            try {
+                for ((name, time) in batch) {
+                    db.execSQL(
+                        "UPDATE media SET last_shown_at = ? WHERE file_name = ?",
+                        arrayOf(time, name)
+                    )
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+        }
+
+        fun delete(fileName: String) {
+            writableDatabase.delete("media", "file_name = ?", arrayOf(fileName))
+        }
+
+        fun clear() {
+            writableDatabase.delete("media", null, null)
+        }
+    }
+
+}

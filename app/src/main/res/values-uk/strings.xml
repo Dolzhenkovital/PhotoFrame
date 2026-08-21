@@ -13,6 +13,41 @@
     <string name="scanning">Сканування…</string>
     <string name="scan_done">Знайдено фото: %1$d</string>
 
+    <string name="pref_source_title">Показувати фото з</string>
+    <string name="source_both">Локальна тека + Google Photos</string>
+    <string name="source_local">Лише локальна тека</string>
+    <string name="source_google">Лише Google Photos</string>
+
+    <string name="cat_gphotos">Google Photos</string>
+    <string name="pref_gp_add_title">Додати фото з Google Photos</string>
+    <string name="pref_gp_add_summary">Оберіть на цьому пристрої або скануйте QR-код телефоном</string>
+    <string name="pref_cache_size_title">Розмір кешу</string>
+    <string name="pref_gp_clear_title">Очистити кеш Google Photos</string>
+    <string name="gp_clear_confirm">Видалити всі завантажені фото Google Photos із цього пристрою?</string>
+    <string name="gp_cleared">Кеш Google Photos очищено</string>
+    <string name="gp_clear_while_sync">Спершу завершіть або скасуйте поточну синхронізацію</string>
+    <string name="gp_cache_too_small">Розмір кешу замалий для обраних фотографій</string>
+    <string name="cache_256mb">256 МБ</string>
+    <string name="cache_512mb">512 МБ</string>
+    <string name="cache_1gb">1 ГБ</string>
+    <string name="cache_2gb">2 ГБ</string>
+    <string name="cache_4gb">4 ГБ</string>
+
+    <string name="gp_state_connecting">Підключення до Google…</string>
+    <string name="gp_state_waiting">Скануйте QR-код телефоном і оберіть фото, або відкрийте вибір на цьому пристрої.</string>
+    <string name="gp_state_downloading">Завантаження %1$d з %2$d…</string>
+    <string name="gp_done">Додано фото: %1$d</string>
+    <string name="gp_timeout">Час вичерпано. Спробуйте ще раз.</string>
+    <string name="gp_error_generic">Помилка Google Photos: %1$s</string>
+    <string name="gp_error_no_gms">На цьому пристрої немає сервісів Google Play</string>
+    <string name="gp_open_here">Відкрити на цьому пристрої</string>
+    <string name="gp_cancel">Скасувати</string>
+    <string name="gp_close">Закрити</string>
+    <string name="gp_no_browser">На пристрої немає браузера — скористайтеся QR-кодом</string>
+    <string name="gp_bad_picker_uri">Google повернув неочікуване посилання — спробуйте ще раз</string>
+    <string name="gp_qr_desc">QR-код для вибору фотографій</string>
+    <string name="empty_no_photos_google">Додайте фото з Google Photos у налаштуваннях.</string>
+
     <string name="cat_slideshow">Слайдшоу</string>
     <string name="pref_interval_title">Інтервал зміни фото</string>
     <string name="pref_transition_title">Ефект переходу</string>

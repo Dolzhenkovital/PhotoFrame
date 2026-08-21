@@ -27,6 +27,35 @@
         <item>@string/interval_1h</item>
     </string-array>
 
+    <!-- Values must stay in sync with settings/Prefs.SourceMode mapping -->
+    <string-array name="source_values">
+        <item>both</item>
+        <item>local</item>
+        <item>google</item>
+    </string-array>
+
+    <string-array name="source_entries">
+        <item>@string/source_both</item>
+        <item>@string/source_local</item>
+        <item>@string/source_google</item>
+    </string-array>
+
+    <string-array name="cache_size_values">
+        <item>268435456</item>
+        <item>536870912</item>
+        <item>1073741824</item>
+        <item>2147483648</item>
+        <item>4294967296</item>
+    </string-array>
+
+    <string-array name="cache_size_entries">
+        <item>@string/cache_256mb</item>
+        <item>@string/cache_512mb</item>
+        <item>@string/cache_1gb</item>
+        <item>@string/cache_2gb</item>
+        <item>@string/cache_4gb</item>
+    </string-array>
+
     <!-- Values must stay in sync with slideshow/TransitionEffect enum names -->
     <string-array name="transition_values">
         <item>CROSSFADE</item>

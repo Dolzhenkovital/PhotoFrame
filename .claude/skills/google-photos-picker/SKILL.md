@@ -92,8 +92,39 @@ Store `mediaFileMetadata.width/height` in the cache index — the slideshow
 needs aspect ratio for orientation matching without decoding the file.
 
 Run downloads sequentially (or 2 in parallel max) on a background executor —
-old frames choke on parallel I/O. Sync only on Wi-Fi + charging by default
-(frames are always charging; see [[android-compat]] for Doze notes).
+old frames choke on parallel I/O. Downloads MUST happen during the active
+session (baseUrls die in ~60 min), so they run immediately after picking
+while the user is present — deferred/scheduled sync is impossible with the
+Picker API. WorkManager with charging+Wi-Fi constraints is only for future
+retry-leftovers logic, not the main path. Note: unlike the old Library API,
+Picker baseUrl downloads REQUIRE the `Authorization: Bearer` header.
+
+Implementation map (as built in Phase 2): `gphotos/PickerApi` (REST),
+`PickerJson` (parsing, JVM-tested), `GPhotosCache` (+`CacheEviction` policy,
+JVM-tested), `GPhotosSyncManager` (state machine, app-scoped),
+`GoogleAuth` (Identity SDK), `QrCode` (ZXing). UI in `SettingsActivity`.
+
+## Treat API responses as untrusted input
+
+Everything the Picker API returns crosses a network boundary, so validate it
+before it reaches Android APIs or the cache:
+
+- **Never send the bearer token to a host you did not verify.** `baseUrl`
+  downloads attach the user's OAuth token; a tampered item pointing anywhere
+  but `*.googleusercontent.com` would hand the token to a stranger. Validate
+  at parse time AND at the point the token is attached (`PickerUris`).
+- **Never hand `pickerUri` straight to `ACTION_VIEW` or a QR code.** Require
+  `https` and exactly `photos.google.com` (no `*.google.com` wildcard — far
+  too broad), and reject authority tricks like `https://photos.google.com@evil`.
+  The QR path matters as much as the button: the user scans it with their
+  personal phone.
+- **Never index a downloaded file without a successful bounds decode.** An
+  HTML or JSON error body served with a 2xx status would otherwise enter the
+  cache as a "photo" and break the slideshow on every cycle. Delete it
+  instead — unlike the local source, we control this download and can retry.
+- Require the fields the flow actually depends on (`id`, `pickerUri`) rather
+  than defaulting them to empty strings: a blank id polls a session that does
+  not exist, forever.
 
 ## Cache
 
