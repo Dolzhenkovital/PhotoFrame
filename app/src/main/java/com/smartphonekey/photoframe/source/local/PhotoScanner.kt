@@ -7,6 +7,8 @@ import android.os.Build
 import android.provider.DocumentsContract
 import androidx.exifinterface.media.ExifInterface
 import com.smartphonekey.photoframe.core.PhotoItem
+import com.smartphonekey.photoframe.motion.MotionPhotoDetector
+import java.io.ByteArrayInputStream
 
 /**
  * Scans a SAF folder tree for images.
@@ -15,11 +17,19 @@ import com.smartphonekey.photoframe.core.PhotoItem
  * NOT DocumentFile.listFiles() which issues one IPC round-trip per file and
  * is unusably slow on big folders on old devices (local-photos skill).
  *
- * Dimensions are read once per file (bounds-only decode + EXIF swap) and
- * reused from [known] on rescans when size+mtime are unchanged.
+ * Per new/changed file the scanner opens ONE stream and reads the head
+ * (256 KB) into memory; dimensions (bounds decode), EXIF rotation and
+ * motion-photo markers are all parsed from that buffer — old frames pay for
+ * every stream open, so batching the reads matters. Results are reused from
+ * [known] on rescans when size+mtime are unchanged.
  */
 class PhotoScanner(private val resolver: ContentResolver) {
 
+    // Synchronized because the instance holds a reusable head buffer: two
+    // concurrent scans on one instance would corrupt each other's parsing.
+    // (Callers create a PhotoScanner per rescan anyway; this makes the
+    // shared-instance case safe instead of silently wrong.)
+    @Synchronized
     fun scan(treeUri: Uri, known: Map<String, PhotoItem>): List<PhotoItem> {
         val out = ArrayList<PhotoItem>()
         val dirs = ArrayDeque<Pair<String, Int>>() // documentId to depth
@@ -49,11 +59,12 @@ class PhotoScanner(private val resolver: ContentResolver) {
                         val cached = known[uri]
                         val item =
                             if (cached != null && cached.sizeBytes == size &&
-                                cached.lastModified == mtime && cached.width > 0
+                                cached.lastModified == mtime && cached.width > 0 &&
+                                cached.videoOffsetBytes != PhotoItem.MOTION_NOT_SCANNED
                             ) {
                                 cached
                             } else {
-                                readDimensions(uri, name, size, mtime)
+                                inspect(uri, name, size, mtime)
                             }
                         out.add(item)
                     }
@@ -63,38 +74,94 @@ class PhotoScanner(private val resolver: ContentResolver) {
         return out
     }
 
-    private fun readDimensions(
-        uri: String,
-        name: String,
-        size: Long,
-        mtime: Long,
-    ): PhotoItem {
+    // One buffer for the whole scan (the scanner runs on a single IO
+    // thread): a fresh 256 KB allocation per file would be real GC churn on
+    // a 1 GB frame with a 10k-photo card.
+    private val headBuffer = ByteArray(MotionPhotoDetector.HEAD_BYTES)
+
+    /** One stream open: head buffer → bounds + EXIF + motion markers. */
+    private fun inspect(uri: String, name: String, size: Long, mtime: Long): PhotoItem {
         var width = 0
         var height = 0
+        var rotation = 0
+        var motion: MotionPhotoDetector.Result? = null
         try {
-            resolver.openInputStream(Uri.parse(uri))?.use { stream ->
+            val headLength = readHead(uri)
+            if (headLength > 0) {
+                // EXIF (APP1) sits right after the JPEG SOI marker, so the
+                // head buffer has it even when the DIMENSIONS live further
+                // in — read rotation independently of where bounds come from.
+                rotation = try {
+                    ExifInterface(ByteArrayInputStream(headBuffer, 0, headLength))
+                        .rotationDegrees
+                } catch (e: Exception) {
+                    0 // truncated/absent EXIF in the head → no rotation
+                }
                 val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeStream(stream, null, options)
+                BitmapFactory.decodeByteArray(headBuffer, 0, headLength, options)
                 if (options.outWidth > 0 && options.outHeight > 0) {
                     width = options.outWidth
                     height = options.outHeight
                 }
+                motion = MotionPhotoDetector.detect(headBuffer, headLength, size)
             }
-            if (width > 0) {
+            if (width <= 0) {
+                // Rare: dimensions live past the head (huge embedded
+                // thumbnail). Fall back to a full-stream bounds decode.
                 resolver.openInputStream(Uri.parse(uri))?.use { stream ->
-                    val rotation = ExifInterface(stream).rotationDegrees
-                    if (rotation == 90 || rotation == 270) {
-                        val t = width
-                        width = height
-                        height = t
+                    val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeStream(stream, null, options)
+                    if (options.outWidth > 0 && options.outHeight > 0) {
+                        width = options.outWidth
+                        height = options.outHeight
                     }
                 }
+                // If the SOF was not in the head, the EXIF APP1 may not have
+                // been either — this file's metadata layout is unusual, so
+                // re-read orientation from the full stream like the bounds.
+                if (width > 0 && rotation == 0) {
+                    rotation = try {
+                        resolver.openInputStream(Uri.parse(uri))?.use { stream ->
+                            ExifInterface(stream).rotationDegrees
+                        } ?: 0
+                    } catch (e: Exception) {
+                        0
+                    }
+                }
+            }
+            if (width > 0 && (rotation == 90 || rotation == 270)) {
+                val t = width
+                width = height
+                height = t
             }
         } catch (e: Exception) {
             // Unreadable file: dims stay 0 → classified SQUARE, shown anyway.
         }
-        return PhotoItem(uri, name, size, mtime, width, height)
+        return PhotoItem(
+            uri = uri,
+            displayName = name,
+            sizeBytes = size,
+            lastModified = mtime,
+            width = width,
+            height = height,
+            videoOffsetBytes = motion?.videoOffsetBytes ?: -1L,
+            videoLengthBytes = motion?.videoLengthBytes ?: 0L,
+        )
     }
+
+    /** Fills [headBuffer]; returns the byte count read (0 when unreadable). */
+    private fun readHead(uri: String): Int =
+        resolver.openInputStream(Uri.parse(uri))?.use { stream ->
+            var filled = 0
+            while (filled < headBuffer.size) {
+                val read = stream.read(headBuffer, filled, headBuffer.size - filled)
+                // <= 0: EOF, or a misbehaving provider returning 0 for a
+                // non-empty request — either way looping again cannot help.
+                if (read <= 0) break
+                filled += read
+            }
+            filled
+        } ?: 0
 
     private fun imageMimes(): Set<String> =
         if (Build.VERSION.SDK_INT >= 28) MIMES_WITH_HEIF else MIMES_BASE

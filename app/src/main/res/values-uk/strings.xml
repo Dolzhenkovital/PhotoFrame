@@ -51,6 +51,10 @@
     <string name="cat_slideshow">Слайдшоу</string>
     <string name="pref_interval_title">Інтервал зміни фото</string>
     <string name="pref_transition_title">Ефект переходу</string>
+    <string name="pref_fill_title">Заповнювати екран</string>
+    <string name="pref_fill_summary">Обрізати фото на весь екран замість смуг з боків</string>
+    <string name="pref_motion_title">Motion Photos</string>
+    <string name="pref_motion_summary">Програвати коротке відео з «живих» фото раз на слайд (локальні знімки з вбудованим відео)</string>
 
     <string name="interval_5s">5 секунд</string>
     <string name="interval_10s">10 секунд</string>

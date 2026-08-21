@@ -12,11 +12,27 @@ android {
         // Android 6.0 — the oldest hardware we support (old photo frames).
         minSdk = 23
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.3.0"
 
         // Ship only the locales we actually translate — smaller APK.
         resourceConfigurations += listOf("en", "uk")
+    }
+
+    // Provided by the release workflow (secrets → env). Local builds and CI
+    // debug builds have no keystore: the config simply isn't created and
+    // the release build stays unsigned.
+    val releaseKeystorePath = System.getenv("RELEASE_KEYSTORE_PATH")
+        ?.takeIf { it.isNotBlank() }
+    if (releaseKeystorePath != null) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(releaseKeystorePath)
+                storePassword = System.getenv("RELEASE_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("RELEASE_KEY_ALIAS")
+                keyPassword = System.getenv("RELEASE_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -27,6 +43,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (releaseKeystorePath != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

@@ -23,6 +23,16 @@
         android:scaleType="fitCenter"
         android:visibility="invisible" />
 
+    <!-- Motion-photo video, above the stills. Kept at alpha 0 (not
+         INVISIBLE: the SurfaceTexture must stay alive) and GONE entirely
+         while the feature is disabled so it costs nothing. -->
+    <TextureView
+        android:id="@+id/motion_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:alpha="0"
+        android:visibility="gone" />
+
     <LinearLayout
         android:id="@+id/empty_group"
         android:layout_width="wrap_content"

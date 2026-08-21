@@ -3,6 +3,7 @@ package com.smartphonekey.photoframe
 import android.content.Intent
 import android.content.res.Configuration
 import android.os.Bundle
+import android.view.TextureView
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageView
@@ -15,6 +16,7 @@ import androidx.lifecycle.Lifecycle
 import com.smartphonekey.photoframe.core.PhotoOrientation
 import com.smartphonekey.photoframe.core.PlaybackQueue
 import com.smartphonekey.photoframe.gphotos.GPhotosSyncManager
+import com.smartphonekey.photoframe.motion.MotionPlayer
 import com.smartphonekey.photoframe.settings.Prefs
 import com.smartphonekey.photoframe.settings.SettingsActivity
 import com.smartphonekey.photoframe.slideshow.SlideshowController
@@ -26,6 +28,7 @@ class MainActivity : AppCompatActivity(), SlideshowController.Listener {
     private lateinit var controller: SlideshowController
     private lateinit var emptyGroup: View
     private lateinit var emptyText: TextView
+    private lateinit var motionView: TextureView
 
     // A sync can finish while this screen is already showing (the user
     // closed settings mid-download) — reload so the new photos appear now,
@@ -47,9 +50,13 @@ class MainActivity : AppCompatActivity(), SlideshowController.Listener {
         emptyText = findViewById(R.id.empty_text)
         val photoA = findViewById<ImageView>(R.id.photo_a)
         val photoB = findViewById<ImageView>(R.id.photo_b)
+        motionView = findViewById(R.id.motion_view)
 
         queue = PlaybackQueue()
-        controller = SlideshowController(photoA, photoB, app.prefs, queue, this)
+        val motionPlayer = MotionPlayer(motionView, contentResolver, app.ioExecutor)
+        controller = SlideshowController(
+            photoA, photoB, app.prefs, queue, this, motionPlayer
+        )
         controller.onPhotoShown = { item ->
             app.gphotosCache.noteShown(item.uri, System.currentTimeMillis())
         }
@@ -64,6 +71,10 @@ class MainActivity : AppCompatActivity(), SlideshowController.Listener {
     override fun onResume() {
         super.onResume()
         hideSystemUi()
+        // GONE while disabled: no SurfaceTexture is created, so the feature
+        // costs literally nothing when the toggle is off.
+        motionView.visibility =
+            if (app.prefs.motionPhotosEnabled) View.VISIBLE else View.GONE
         app.gphotosSync.attachTransitionsOnly(syncListener)
         reloadAndStart()
     }
@@ -74,6 +85,13 @@ class MainActivity : AppCompatActivity(), SlideshowController.Listener {
         // Persist the batched last-shown timestamps for LRU eviction.
         app.ioExecutor.execute { app.gphotosCache.flush() }
         super.onPause()
+    }
+
+    override fun onDestroy() {
+        // onPause already stopped everything; this is belt-and-braces for
+        // teardown paths that skip a visible pause (e.g. finish from tests).
+        controller.stop()
+        super.onDestroy()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

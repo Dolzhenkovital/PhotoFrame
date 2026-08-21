@@ -27,6 +27,16 @@ class Prefs(context: Context) {
     val transitionEffect: TransitionEffect
         get() = TransitionEffect.fromPref(sp.getString(KEY_TRANSITION, null))
 
+    /** Motion photos: OFF by default — video decode wakes the SoC every
+     *  slide, the weak-hardware-safe default (motion-photo skill). */
+    val motionPhotosEnabled: Boolean
+        get() = sp.getBoolean(KEY_MOTION, false)
+
+    /** Fill & crop instead of letterboxing. Default off: people hate
+     *  beheaded relatives (slideshow-engine skill). */
+    val fillScreen: Boolean
+        get() = sp.getBoolean(KEY_FILL, false)
+
     val sourceMode: SourceMode
         get() = when (sp.getString(KEY_SOURCE, null)) {
             "local" -> SourceMode.LOCAL
@@ -49,6 +59,8 @@ class Prefs(context: Context) {
         const val KEY_TRANSITION = "transition_effect"
         const val KEY_SOURCE = "photo_source"
         const val KEY_CACHE_SIZE = "cache_size_bytes"
+        const val KEY_MOTION = "motion_photos_enabled"
+        const val KEY_FILL = "display_fill"
         const val DEFAULT_CACHE_BYTES = 1_073_741_824L
         const val MIN_CACHE_BYTES = 268_435_456L // 256 MB, smallest preset
         const val MAX_CACHE_BYTES = 4_294_967_296L // 4 GB, largest preset
