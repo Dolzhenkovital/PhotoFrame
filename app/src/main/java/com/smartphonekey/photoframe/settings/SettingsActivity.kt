@@ -32,6 +32,7 @@ class SettingsActivity : AppCompatActivity() {
 
     private lateinit var googleAuth: GoogleAuth
     private var syncDialog: AlertDialog? = null
+    private var syncListener: GPhotosSyncManager.Listener? = null
 
     private val pickFolder =
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -83,7 +84,10 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        app.gphotosSync.detach()
+        // Detach only our own observer: during recreation the new Activity
+        // may already have attached its listener, which must survive.
+        syncListener?.let { app.gphotosSync.detach(it) }
+        syncListener = null
         syncDialog?.dismiss()
         syncDialog = null
         super.onDestroy()
@@ -190,20 +194,22 @@ class SettingsActivity : AppCompatActivity() {
         val progress = view.findViewById<ProgressBar>(R.id.gp_progress)
         val openLocal = view.findViewById<Button>(R.id.gp_open_local)
 
+        lateinit var listener: GPhotosSyncManager.Listener
         val dialog = AlertDialog.Builder(this)
             .setTitle(R.string.cat_gphotos)
             .setView(view)
             .setNegativeButton(R.string.gp_cancel) { _, _ -> app.gphotosSync.cancel() }
             .setOnDismissListener {
-                app.gphotosSync.detach()
+                app.gphotosSync.detach(listener)
+                if (syncListener === listener) syncListener = null
                 syncDialog = null
             }
             .create()
         syncDialog = dialog
         dialog.show()
 
-        app.gphotosSync.attach { state ->
-            if (syncDialog !== dialog) return@attach
+        listener = GPhotosSyncManager.Listener { state ->
+            if (syncDialog !== dialog) return@Listener
             when (state) {
                 is GPhotosSyncManager.State.Idle -> dialog.dismiss()
 
@@ -269,6 +275,8 @@ class SettingsActivity : AppCompatActivity() {
                 }
             }
         }
+        syncListener = listener
+        app.gphotosSync.attach(listener)
     }
 
     private fun openPickerLocally(pickerUri: String) {

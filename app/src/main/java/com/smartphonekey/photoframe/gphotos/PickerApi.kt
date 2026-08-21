@@ -91,10 +91,22 @@ class PickerApi(
                 if (code !in 200..299) {
                     throw ApiException(code, readError(conn))
                 }
-                conn.inputStream.use { input ->
-                    target.outputStream().use { output ->
-                        input.copyTo(output, bufferSize = 64 * 1024)
+                // A hostile or broken 2xx body could otherwise stream until
+                // the frame's storage is full — the cache cap only governs
+                // committed files, not a single runaway download.
+                val declared = conn.contentLengthLong
+                if (declared > MAX_DOWNLOAD_BYTES) {
+                    throw ApiException(code, "media too large: $declared bytes")
+                }
+                try {
+                    conn.inputStream.use { input ->
+                        target.outputStream().use { output ->
+                            copyBounded(input, output, MAX_DOWNLOAD_BYTES)
+                        }
                     }
+                } catch (e: IOException) {
+                    target.delete() // never leave a partial/oversized tmp file
+                    throw e
                 }
                 return
             } finally {
@@ -151,6 +163,25 @@ class PickerApi(
         "(unreadable error body)"
     }
 
+    /** Streams [input] to [output], failing once [maxBytes] is exceeded. */
+    private fun copyBounded(
+        input: java.io.InputStream,
+        output: java.io.OutputStream,
+        maxBytes: Long,
+    ) {
+        val chunk = ByteArray(64 * 1024)
+        var total = 0L
+        while (true) {
+            val read = input.read(chunk)
+            if (read < 0) break
+            total += read
+            if (total > maxBytes) {
+                throw IOException("download exceeds $maxBytes bytes")
+            }
+            output.write(chunk, 0, read)
+        }
+    }
+
     /**
      * Reads at most [maxBytes]. Responses are untrusted and the frames are
      * low-RAM, so an unbounded readBytes() on a hostile payload could OOM
@@ -183,6 +214,10 @@ class PickerApi(
         private const val MAX_REDIRECTS = 5
         private const val MAX_JSON_BYTES = 2_000_000 // a 100-item page is ~100 KB
         private const val MAX_ERROR_BYTES = 64 * 1024
+
+        // Screen-sized (=w2048) JPEGs are single-digit MB; 30 MB is generous
+        // headroom for panoramas while still bounding a runaway response.
+        private const val MAX_DOWNLOAD_BYTES = 30L * 1024 * 1024
         private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
 
         /**

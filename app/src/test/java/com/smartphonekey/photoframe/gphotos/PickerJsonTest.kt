@@ -41,6 +41,18 @@ class PickerJsonTest {
     }
 
     @Test
+    fun `polling values are clamped to sane bounds`() {
+        // A sub-millisecond interval would hot-loop the poller; an absurd
+        // timeout could overflow the deadline arithmetic.
+        val session = PickerJson.parseSession(
+            """{"id": "s", "pickerUri": "https://photos.google.com/x",
+                "pollingConfig": {"pollInterval": "0.0001s", "timeoutIn": "999999999s"}}"""
+        )
+        assertEquals(PickerJson.MIN_POLL_INTERVAL_MS, session.pollIntervalMs)
+        assertEquals(PickerJson.MAX_TIMEOUT_MS, session.timeoutMs)
+    }
+
+    @Test
     fun `session without polling config gets defaults`() {
         val session = PickerJson.parseSession("""{"id": "s", "mediaItemsSet": true}""")
         assertEquals(PickerJson.DEFAULT_POLL_INTERVAL_MS, session.pollIntervalMs)

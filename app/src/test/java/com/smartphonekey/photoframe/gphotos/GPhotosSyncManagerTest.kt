@@ -35,8 +35,13 @@ class GPhotosSyncManagerTest {
 
         override fun cancelPending() = delayed.clear()
 
+        /** Drains only what was queued before the call — a poll that
+         *  reschedules itself must not spin this into an infinite loop. */
         fun runPending() {
-            while (delayed.isNotEmpty()) delayed.removeFirst().invoke()
+            repeat(delayed.size) {
+                if (delayed.isEmpty()) return
+                delayed.removeFirst().invoke()
+            }
         }
     }
 
@@ -52,7 +57,7 @@ class GPhotosSyncManagerTest {
         override fun createSession(token: String): PickerSession {
             if (failOnCreate) throw IOException("boom")
             createdSessions++
-            return PickerSession("sess-1", "https://pick/me", 10, 1_000, false)
+            return PickerSession("sess-$createdSessions", "https://pick/me", 10, 1_000, false)
         }
 
         override fun getSession(token: String, sessionId: String) =
@@ -191,6 +196,39 @@ class GPhotosSyncManagerTest {
         assertEquals(State.Idle, sync.state)
         assertEquals(listOf("sess-1"), api.deletedSessions)
         assertTrue(store.committed.isEmpty())
+    }
+
+    @Test
+    fun `cancel then immediate begin does not let the old run clobber the new one`() {
+        // The review-found race: a boolean cancelled flag would be reset by
+        // the new begin(), letting the old in-flight run resume and finish.
+        val poster = TestPoster()
+        val store = FakeStore(tempDir())
+        lateinit var sync: GPhotosSyncManager
+        val api = FakeApi(items = listOf(photo("a"), photo("b"), photo("c")))
+        var interrupted = false
+        api.onDownload = { item ->
+            if (!interrupted && item.id == "a") {
+                interrupted = true
+                sync.cancel()
+                api.itemsReady = false // the new run should park at WaitingForPick
+                sync.begin("token2", 1280)
+            }
+        }
+        sync = manager(api, store, poster)
+        val states = ArrayList<State>()
+        sync.attach { states.add(it) }
+
+        sync.begin("token", 1280)
+        poster.runPending() // old run's poll → download, cancel+begin mid-flight
+
+        // The NEW run owns the state machine; the old one went silent.
+        assertTrue(sync.state is State.WaitingForPick)
+        assertFalse(states.any { it is State.Finished })
+        assertEquals(2, api.createdSessions)
+        assertTrue(api.deletedSessions.contains("sess-1"))
+        assertFalse("new run's session must survive", api.deletedSessions.contains("sess-2"))
+        assertFalse("old run must stop downloading", store.committed.contains("c"))
     }
 
     @Test

@@ -15,6 +15,12 @@ import java.util.concurrent.Executor
  * on the main thread via [poster]; every network/disk step hops onto the IO
  * executor. Downloads are sequential — parallel I/O chokes old frames.
  *
+ * Cancellation is scoped by a per-run [generation]: every async step
+ * captures the generation it was started under and becomes a no-op the
+ * moment it is stale. A plain boolean flag is not enough — cancel() followed
+ * by an immediate begin() would reset it and let the OLD run resume,
+ * clobbering the new run's session and states.
+ *
  * [poster] and [clock] are injectable so the whole state machine — including
  * cancellation races — is unit-testable on the JVM without Android.
  */
@@ -62,13 +68,16 @@ class GPhotosSyncManager(
         fun onState(state: State)
     }
 
+    /** Bumped on every begin() and cancel(); stale runs see the mismatch. */
     @Volatile
-    private var cancelled = false
-    private var listener: Listener? = null
-    private var currentToken: String? = null
+    private var generation = 0
 
-    @Volatile
-    private var currentSessionId: String? = null
+    private var listener: Listener? = null
+
+    // Tracked only so cancel() can clean up the server-side session.
+    // Written on the main thread under the current generation.
+    private var activeToken: String? = null
+    private var activeSessionId: String? = null
 
     var state: State = State.Idle
         private set
@@ -84,88 +93,99 @@ class GPhotosSyncManager(
         listener.onState(state)
     }
 
-    fun detach() {
-        listener = null
+    /**
+     * Removes [listener] only if it is still the attached one — an old
+     * Activity being destroyed must not detach the observer a newer
+     * Activity has installed.
+     */
+    fun detach(listener: Listener) {
+        if (this.listener === listener) this.listener = null
     }
 
     fun begin(token: String, maxDimension: Int) {
         if (isActive) return
-        cancelled = false
-        currentToken = token
+        val gen = ++generation
+        activeToken = token
+        activeSessionId = null
         setState(State.Connecting)
         io {
             try {
                 val session = api.createSession(token)
-                currentSessionId = session.id
-                // cancel() may have run while we were creating the session —
-                // it could not have known this id, so clean it up here.
-                if (cancelled) {
-                    deleteSessionQuietly()
-                    return@io
-                }
-                val deadline = clock() + session.timeoutMs
                 post {
-                    if (cancelled) return@post
+                    if (gen != generation) {
+                        // cancel() (or a newer begin) won while we were
+                        // creating this session — it could not have known the
+                        // id, so clean it up here.
+                        deleteQuietly(token, session.id)
+                        return@post
+                    }
+                    activeSessionId = session.id
                     setState(State.WaitingForPick(session.pickerUri))
-                    schedulePoll(token, session, maxDimension, deadline)
+                    schedulePoll(gen, token, session, maxDimension, clock() + session.timeoutMs)
                 }
             } catch (e: Exception) {
-                failWith(e)
+                failWith(gen, token, null, e)
             }
         }
     }
 
     fun cancel() {
         if (!isActive) return
-        cancelled = true
+        generation++
         poster.cancelPending()
-        deleteSessionQuietly()
+        val token = activeToken
+        val sessionId = activeSessionId
+        activeToken = null
+        activeSessionId = null
+        if (token != null && sessionId != null) deleteQuietly(token, sessionId)
         setState(State.Idle)
     }
 
     private fun schedulePoll(
+        gen: Int,
         token: String,
         session: PickerSession,
         maxDimension: Int,
         deadline: Long,
     ) {
         poster.postDelayed(session.pollIntervalMs) {
-            if (cancelled) return@postDelayed
+            if (gen != generation) return@postDelayed
             io {
-                if (cancelled) return@io
+                if (gen != generation) return@io
                 try {
                     val fresh = api.getSession(token, session.id)
                     post {
-                        if (cancelled) return@post
+                        if (gen != generation) return@post
                         when {
                             fresh.mediaItemsSet ->
-                                io { downloadAll(token, session.id, maxDimension) }
+                                io { downloadAll(gen, token, session.id, maxDimension) }
 
                             clock() > deadline -> {
-                                deleteSessionQuietly()
+                                clearActive()
+                                deleteQuietly(token, session.id)
                                 setState(State.Failed(null, timedOut = true))
                             }
 
-                            else -> schedulePoll(token, session, maxDimension, deadline)
+                            else -> schedulePoll(gen, token, session, maxDimension, deadline)
                         }
                     }
                 } catch (e: Exception) {
-                    failWith(e)
+                    failWith(gen, token, session.id, e)
                 }
             }
         }
     }
 
-    private fun downloadAll(token: String, sessionId: String, maxDimension: Int) {
+    private fun downloadAll(gen: Int, token: String, sessionId: String, maxDimension: Int) {
         try {
             val picked = api.listAllMediaItems(token, sessionId)
                 .filter { !it.isVideo } // photos only in this phase
             val fresh = picked.filter { !cache.contains(it) }
-            post { if (!cancelled) setState(State.Downloading(0, fresh.size)) }
+            post { if (gen == generation) setState(State.Downloading(0, fresh.size)) }
 
             var added = 0
             for ((index, item) in fresh.withIndex()) {
-                if (cancelled) break
+                if (gen != generation) break
                 val tmp = File(cache.mediaDir, cache.fileNameFor(item) + ".tmp")
                 try {
                     api.download(token, item, maxDimension, tmp)
@@ -181,39 +201,46 @@ class GPhotosSyncManager(
                     cache.evictToCap(cacheCapBytes())
                 }
                 val done = index + 1
-                post { if (!cancelled) setState(State.Downloading(done, fresh.size)) }
+                post { if (gen == generation) setState(State.Downloading(done, fresh.size)) }
             }
 
-            // A cancelled run must not report success: cancel() already moved
-            // the state to Idle and it stays there. Photos downloaded before
-            // the cancel stay in the cache — they are complete and indexed.
-            if (cancelled) {
-                deleteSessionQuietly()
+            // A stale run must not report success: cancel() already moved the
+            // state to Idle (or a newer run owns it now). Photos downloaded
+            // before the cancel stay — they are complete and indexed.
+            if (gen != generation) {
+                deleteQuietly(token, sessionId)
                 return
             }
 
             api.deleteSession(token, sessionId)
-            currentSessionId = null
             val capTooSmall = cache.evictToCap(cacheCapBytes())
             val total = added
-            post { if (!cancelled) setState(State.Finished(total, capTooSmall)) }
+            post {
+                if (gen != generation) return@post
+                clearActive()
+                setState(State.Finished(total, capTooSmall))
+            }
         } catch (e: Exception) {
-            failWith(e)
+            failWith(gen, token, sessionId, e)
         }
     }
 
-    private fun failWith(e: Exception) {
-        deleteSessionQuietly()
-        post { if (!cancelled) setState(State.Failed(e.message?.take(200))) }
+    private fun failWith(gen: Int, token: String, sessionId: String?, e: Exception) {
+        if (sessionId != null) deleteQuietly(token, sessionId)
+        post {
+            if (gen != generation) return@post
+            clearActive()
+            setState(State.Failed(e.message?.take(200)))
+        }
     }
 
-    private fun deleteSessionQuietly() {
-        val token = currentToken
-        val sessionId = currentSessionId
-        currentSessionId = null
-        if (token != null && sessionId != null) {
-            io { api.deleteSession(token, sessionId) }
-        }
+    private fun clearActive() {
+        activeToken = null
+        activeSessionId = null
+    }
+
+    private fun deleteQuietly(token: String, sessionId: String) {
+        io { api.deleteSession(token, sessionId) } // deleteSession logs its own failures
     }
 
     private fun setState(newState: State) {

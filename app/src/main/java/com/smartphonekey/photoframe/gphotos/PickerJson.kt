@@ -13,6 +13,10 @@ object PickerJson {
 
     const val DEFAULT_POLL_INTERVAL_MS = 5_000L
     const val DEFAULT_TIMEOUT_MS = 30 * 60_000L
+    const val MIN_POLL_INTERVAL_MS = 1_000L
+    const val MAX_POLL_INTERVAL_MS = 60_000L
+    const val MIN_TIMEOUT_MS = 60_000L
+    const val MAX_TIMEOUT_MS = 24 * 60 * 60_000L
 
     /** Parses protobuf JSON Duration ("5s", "3.500s") into milliseconds. */
     fun parseDurationMs(raw: String?, defaultMs: Long): Long {
@@ -36,15 +40,20 @@ object PickerJson {
         if (pickerUri.isNotBlank() && !PickerUris.isTrustedPickerUri(pickerUri)) {
             throw JSONException("pickerUri is not a Google Photos URL")
         }
+        // Clamped to sane bounds: a sub-second interval would hot-loop the
+        // poller (and hammer the API), and an absurd timeout could overflow
+        // the deadline arithmetic downstream.
+        val pollMs = parseDurationMs(
+            polling?.optString("pollInterval"), DEFAULT_POLL_INTERVAL_MS
+        ).coerceIn(MIN_POLL_INTERVAL_MS, MAX_POLL_INTERVAL_MS)
+        val timeoutMs = parseDurationMs(
+            polling?.optString("timeoutIn"), DEFAULT_TIMEOUT_MS
+        ).coerceIn(MIN_TIMEOUT_MS, MAX_TIMEOUT_MS)
         return PickerSession(
             id = id,
             pickerUri = pickerUri,
-            pollIntervalMs = parseDurationMs(
-                polling?.optString("pollInterval"), DEFAULT_POLL_INTERVAL_MS
-            ),
-            timeoutMs = parseDurationMs(
-                polling?.optString("timeoutIn"), DEFAULT_TIMEOUT_MS
-            ),
+            pollIntervalMs = pollMs,
+            timeoutMs = timeoutMs,
             mediaItemsSet = json.optBoolean("mediaItemsSet", false),
         )
     }
