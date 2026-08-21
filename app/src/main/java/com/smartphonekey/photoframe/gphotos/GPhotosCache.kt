@@ -99,7 +99,14 @@ class GPhotosCache(context: Context) : PhotoStore {
         return digest + ext
     }
 
-    override fun contains(item: PickedItem): Boolean = db.exists(fileNameFor(item))
+    // Row AND file: after an SD remount or external deletion a row can
+    // outlive its bytes — trusting it alone would skip re-downloading a
+    // photo that is actually gone. Called on the sync IO thread, so the
+    // extra stat() is fine.
+    override fun contains(item: PickedItem): Boolean {
+        val name = fileNameFor(item)
+        return db.exists(name) && File(mediaDir, name).exists()
+    }
 
     /**
      * Moves a fully-downloaded tmp file into place and indexes it.
@@ -244,12 +251,20 @@ class GPhotosCache(context: Context) : PhotoStore {
 
     fun clearAll() {
         synchronized(pendingShown) { pendingShown.clear() }
-        // Files first, index second: if the volume is away the rows survive,
-        // and the post-remount sweep reconciles whatever remains.
-        if (storageReady()) {
-            mediaDir.listFiles()?.forEach { it.delete() }
-            db.clear()
+        if (!storageReady()) return
+        // Unreadable listing ≠ empty directory: wiping the index over it
+        // would orphan every file on disk (uncounted by the cap, forever).
+        val listing = mediaDir.listFiles() ?: return
+        // Row by row, mirroring eviction: an index row disappears only once
+        // its bytes are confirmed gone, so a failed delete stays indexed and
+        // is retried by the next clear/eviction instead of leaking storage.
+        for (row in db.listAll()) {
+            val file = File(mediaDir, row.fileName)
+            if (file.delete() || !file.exists()) db.delete(row.fileName)
         }
+        // Best-effort cleanup of files that never had a row (tmp leftovers).
+        val survivors = db.listAll().mapTo(HashSet()) { it.fileName }
+        listing.filter { it.name !in survivors }.forEach { it.delete() }
     }
 
     private class Db(context: Context) :
