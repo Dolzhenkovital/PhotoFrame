@@ -46,6 +46,10 @@ dependencies {
     implementation(libs.androidx.preference)
     implementation(libs.androidx.exifinterface)
     implementation(libs.glide)
+    implementation(libs.play.services.auth)
+    implementation(libs.zxing.core)
 
     testImplementation(libs.junit)
+    // Real org.json for JVM tests (android.jar ships non-functional stubs).
+    testImplementation(libs.org.json)
 }

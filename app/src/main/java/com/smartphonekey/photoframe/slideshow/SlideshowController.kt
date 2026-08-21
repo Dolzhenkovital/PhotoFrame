@@ -16,6 +16,7 @@ import com.bumptech.glide.load.resource.bitmap.DownsampleStrategy
 import com.bumptech.glide.request.RequestListener
 import com.bumptech.glide.request.RequestOptions
 import com.bumptech.glide.request.target.Target
+import com.smartphonekey.photoframe.core.PhotoItem
 import com.smartphonekey.photoframe.core.PlaybackQueue
 import com.smartphonekey.photoframe.settings.Prefs
 import kotlin.random.Random
@@ -50,12 +51,17 @@ class SlideshowController(
 
     private var front: ImageView = viewA
     private var back: ImageView = viewB
+    private var frontItem: PhotoItem? = null
+    private var backItem: PhotoItem? = null
     private var running = false
     private var nextReady = false
     private var pendingAdvance = false
     private var consecutiveFailures = 0
     private var lastEffect: TransitionEffect? = null
     private var driftingView: ImageView? = null
+
+    /** Invoked on the main thread each time a photo lands on screen. */
+    var onPhotoShown: ((PhotoItem) -> Unit)? = null
 
     fun start() {
         if (running) return
@@ -85,6 +91,7 @@ class SlideshowController(
     private fun preloadNext() {
         nextReady = false
         val item = queue.next() ?: return
+        backItem = item
         val metrics = back.resources.displayMetrics
         val options = RequestOptions()
             // RGB_565 + screen-size decode + no duplicate disk cache:
@@ -158,11 +165,14 @@ class SlideshowController(
             if (!running) return@run
             front = incoming
             back = outgoing
+            frontItem = backItem
+            backItem = null
             afterShown()
         }
     }
 
     private fun afterShown() {
+        frontItem?.let { shown -> onPhotoShown?.invoke(shown) }
         maybeStartDrift(front)
         if (queue.size > 1) {
             preloadNext()

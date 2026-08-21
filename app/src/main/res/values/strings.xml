@@ -13,6 +13,39 @@
     <string name="scanning">Scanning…</string>
     <string name="scan_done">Photos found: %1$d</string>
 
+    <string name="pref_source_title">Show photos from</string>
+    <string name="source_both">Local folder + Google Photos</string>
+    <string name="source_local">Local folder only</string>
+    <string name="source_google">Google Photos only</string>
+
+    <string name="cat_gphotos">Google Photos</string>
+    <string name="pref_gp_add_title">Add photos from Google Photos</string>
+    <string name="pref_gp_add_summary">Pick on this device, or scan the QR code with your phone</string>
+    <string name="pref_cache_size_title">Cache size</string>
+    <string name="pref_gp_clear_title">Clear Google Photos cache</string>
+    <string name="gp_clear_confirm">Delete all downloaded Google Photos from this device?</string>
+    <string name="gp_cleared">Google Photos cache cleared</string>
+    <string name="gp_cache_too_small">Cache size is too small for the selected photos</string>
+    <string name="cache_256mb">256 MB</string>
+    <string name="cache_512mb">512 MB</string>
+    <string name="cache_1gb">1 GB</string>
+    <string name="cache_2gb">2 GB</string>
+    <string name="cache_4gb">4 GB</string>
+
+    <string name="gp_state_connecting">Connecting to Google…</string>
+    <string name="gp_state_waiting">Scan the QR code with your phone and pick photos, or open the picker on this device.</string>
+    <string name="gp_state_downloading">Downloading %1$d of %2$d…</string>
+    <string name="gp_done">Photos added: %1$d</string>
+    <string name="gp_timeout">Time ran out. Try again.</string>
+    <string name="gp_error_generic">Google Photos error: %1$s</string>
+    <string name="gp_error_no_gms">Google Play services is not available on this device</string>
+    <string name="gp_open_here">Open on this device</string>
+    <string name="gp_cancel">Cancel</string>
+    <string name="gp_close">Close</string>
+    <string name="gp_no_browser">No browser on this device — scan the QR code instead</string>
+    <string name="gp_qr_desc">QR code for picking photos</string>
+    <string name="empty_no_photos_google">Add photos from Google Photos in Settings.</string>
+
     <string name="cat_slideshow">Slideshow</string>
     <string name="pref_interval_title">Slide interval</string>
     <string name="pref_transition_title">Transition effect</string>

@@ -92,8 +92,17 @@ Store `mediaFileMetadata.width/height` in the cache index — the slideshow
 needs aspect ratio for orientation matching without decoding the file.
 
 Run downloads sequentially (or 2 in parallel max) on a background executor —
-old frames choke on parallel I/O. Sync only on Wi-Fi + charging by default
-(frames are always charging; see [[android-compat]] for Doze notes).
+old frames choke on parallel I/O. Downloads MUST happen during the active
+session (baseUrls die in ~60 min), so they run immediately after picking
+while the user is present — deferred/scheduled sync is impossible with the
+Picker API. WorkManager with charging+Wi-Fi constraints is only for future
+retry-leftovers logic, not the main path. Note: unlike the old Library API,
+Picker baseUrl downloads REQUIRE the `Authorization: Bearer` header.
+
+Implementation map (as built in Phase 2): `gphotos/PickerApi` (REST),
+`PickerJson` (parsing, JVM-tested), `GPhotosCache` (+`CacheEviction` policy,
+JVM-tested), `GPhotosSyncManager` (state machine, app-scoped),
+`GoogleAuth` (Identity SDK), `QrCode` (ZXing). UI in `SettingsActivity`.
 
 ## Cache
 

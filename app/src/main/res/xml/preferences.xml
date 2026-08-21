@@ -4,6 +4,14 @@
 
     <PreferenceCategory android:title="@string/cat_source">
 
+        <ListPreference
+            android:key="photo_source"
+            android:title="@string/pref_source_title"
+            android:entries="@array/source_entries"
+            android:entryValues="@array/source_values"
+            android:defaultValue="both"
+            app:useSimpleSummaryProvider="true" />
+
         <Preference
             android:key="pick_folder"
             android:title="@string/pref_folder_title"
@@ -12,6 +20,27 @@
         <Preference
             android:key="rescan"
             android:title="@string/pref_rescan_title" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory android:title="@string/cat_gphotos">
+
+        <Preference
+            android:key="gp_add"
+            android:title="@string/pref_gp_add_title"
+            android:summary="@string/pref_gp_add_summary" />
+
+        <ListPreference
+            android:key="cache_size_bytes"
+            android:title="@string/pref_cache_size_title"
+            android:entries="@array/cache_size_entries"
+            android:entryValues="@array/cache_size_values"
+            android:defaultValue="1073741824"
+            app:useSimpleSummaryProvider="true" />
+
+        <Preference
+            android:key="gp_clear"
+            android:title="@string/pref_gp_clear_title" />
 
     </PreferenceCategory>
 

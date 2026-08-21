@@ -25,7 +25,24 @@
 - **Фаза 1 — ядро слайдшоу** ✅: локальні фото (SAF-тека, без дозволів),
   черга з підбором за орієнтацією, таймер із пресетами, 10 ефектів переходу
   + випадковий, екран налаштувань (EN/UK)
-- **Фаза 2 — Google Photos** 🔜 · **Фаза 3 — Motion Photos** 🔜
+- **Фаза 2 — Google Photos** ✅: OAuth без секретів у коді, вибір фото через
+  Picker API (QR-код для телефона або локально), дисковий кеш із лімітом
+  (за замовчуванням 1 ГБ) та LRU-евікшеном, офлайн-показ
+- **Фаза 3 — Motion Photos** 🔜
+
+## Налаштування Google Photos (одноразово)
+
+Google вимагає власний OAuth-клієнт для кожного застосунку:
+
+1. [Google Cloud Console](https://console.cloud.google.com) → створіть проєкт
+   → увімкніть **Photos Picker API**.
+2. **OAuth consent screen**: тип External, додайте scope
+   `photospicker.mediaitems.readonly`, себе — у Test users.
+3. **Credentials → Create OAuth client ID → Android**: package
+   `com.smartphonekey.photoframe` + SHA-1 підпису збірки
+   (`./gradlew signingReport` або з Android Studio).
+
+Секретів у коді немає — клієнт зіставляється за package + SHA-1.
 
 ## Збірка
 

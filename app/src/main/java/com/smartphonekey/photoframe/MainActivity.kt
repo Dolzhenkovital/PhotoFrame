@@ -14,6 +14,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import com.smartphonekey.photoframe.core.PhotoOrientation
 import com.smartphonekey.photoframe.core.PlaybackQueue
+import com.smartphonekey.photoframe.settings.Prefs
 import com.smartphonekey.photoframe.settings.SettingsActivity
 import com.smartphonekey.photoframe.slideshow.SlideshowController
 
@@ -39,6 +40,9 @@ class MainActivity : AppCompatActivity(), SlideshowController.Listener {
 
         queue = PlaybackQueue()
         controller = SlideshowController(photoA, photoB, app.prefs, queue, this)
+        controller.onPhotoShown = { item ->
+            app.gphotosCache.noteShown(item.uri, System.currentTimeMillis())
+        }
 
         val openSettings = View.OnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
@@ -55,6 +59,8 @@ class MainActivity : AppCompatActivity(), SlideshowController.Listener {
 
     override fun onPause() {
         controller.stop()
+        // Persist the batched last-shown timestamps for LRU eviction.
+        app.ioExecutor.execute { app.gphotosCache.flush() }
         super.onPause()
     }
 
@@ -71,7 +77,12 @@ class MainActivity : AppCompatActivity(), SlideshowController.Listener {
     }
 
     override fun onEmpty() {
-        emptyText.setText(R.string.empty_no_photos)
+        val message = if (app.prefs.sourceMode == Prefs.SourceMode.GOOGLE) {
+            R.string.empty_no_photos_google
+        } else {
+            R.string.empty_no_photos
+        }
+        emptyText.setText(message)
         emptyGroup.visibility = View.VISIBLE
     }
 
@@ -82,7 +93,13 @@ class MainActivity : AppCompatActivity(), SlideshowController.Listener {
 
     private fun reloadAndStart() {
         app.ioExecutor.execute {
-            val photos = app.index.loadAll()
+            val mode = app.prefs.sourceMode
+            val photos = buildList {
+                if (mode != Prefs.SourceMode.GOOGLE) addAll(app.index.loadAll())
+                if (mode != Prefs.SourceMode.LOCAL) {
+                    addAll(app.gphotosCache.loadAllAsPhotoItems())
+                }
+            }
             runOnUiThread {
                 if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
                     return@runOnUiThread
