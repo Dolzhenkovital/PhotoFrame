@@ -2,6 +2,7 @@ package com.smartphonekey.photoframe.motion
 
 import android.content.ContentResolver
 import android.graphics.Matrix
+import android.graphics.SurfaceTexture
 import android.media.MediaPlayer
 import android.net.Uri
 import android.view.Surface
@@ -35,11 +36,49 @@ class MotionPlayer(
     /** Invalidates async callbacks from a superseded playback. */
     private var playToken = 0
 
+    // The SurfaceTexture appears one layout pass AFTER the view turns
+    // VISIBLE — exactly when the first slide after a resume is already on
+    // screen. That slide's item waits here and starts the moment the
+    // surface arrives; a slide change (stop()) discards it.
+    private var pendingItem: PhotoItem? = null
+    private var pendingFill = false
+
+    init {
+        textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+            override fun onSurfaceTextureAvailable(
+                texture: SurfaceTexture,
+                width: Int,
+                height: Int,
+            ) {
+                val item = pendingItem ?: return
+                pendingItem = null
+                playOnce(item, pendingFill)
+            }
+
+            override fun onSurfaceTextureSizeChanged(
+                texture: SurfaceTexture,
+                width: Int,
+                height: Int,
+            ) = Unit
+
+            override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+                stop() // playing into a dead surface is pointless
+                return true
+            }
+
+            override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
+        }
+    }
+
     /** Starts playback; on any problem the still simply stays visible. */
     fun playOnce(item: PhotoItem, fillScreen: Boolean) {
         stop()
         if (!item.hasMotion) return
-        if (!textureView.isAvailable) return // surface not ready yet — skip
+        if (!textureView.isAvailable) {
+            pendingItem = item
+            pendingFill = fillScreen
+            return
+        }
         val token = ++playToken
         try {
             val texture = textureView.surfaceTexture ?: return
@@ -86,6 +125,7 @@ class MotionPlayer(
     /** Immediate teardown (slide change, screen off, settings toggle). */
     fun stop() {
         playToken++
+        pendingItem = null
         textureView.animate().cancel()
         textureView.alpha = 0f
         releasePlayer()

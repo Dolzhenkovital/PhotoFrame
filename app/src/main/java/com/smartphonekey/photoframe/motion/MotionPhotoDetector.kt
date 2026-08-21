@@ -33,17 +33,19 @@ object MotionPhotoDetector {
     private val MARKER = "GCamera:".toByteArray(Charsets.ISO_8859_1)
 
     // XMP is XML: values appear either as attributes (name="123") or as
-    // element text (<name>123</name>). Both forms exist in the wild.
+    // element text (<name>123</name>). Both forms exist in the wild, and
+    // XML legally allows single quotes and whitespace around '=' — the
+    // patterns tolerate all of it.
     private val MICRO_VIDEO_FLAG =
-        Regex("""GCamera:MicroVideo(?:="1"|>1<)""")
+        Regex("""GCamera:MicroVideo\s*(?:=\s*["']1["']|>\s*1\s*<)""")
     private val MICRO_VIDEO_OFFSET =
-        Regex("""GCamera:MicroVideoOffset(?:="(\d+)"|>(\d+)<)""")
+        Regex("""GCamera:MicroVideoOffset\s*(?:=\s*["'](\d+)["']|>\s*(\d+)\s*<)""")
     private val MOTION_PHOTO_FLAG =
-        Regex("""GCamera:MotionPhoto(?:="1"|>1<)""")
+        Regex("""GCamera:MotionPhoto\s*(?:=\s*["']1["']|>\s*1\s*<)""")
     private val VIDEO_MIME =
-        Regex("""Item:Mime="video/mp4"""")
+        Regex("""Item:Mime\s*=\s*["']video/mp4["']""")
     private val ITEM_LENGTH =
-        Regex("""Item:Length(?:="(\d+)"|>(\d+)<)""")
+        Regex("""Item:Length\s*(?:=\s*["'](\d+)["']|>\s*(\d+)\s*<)""")
 
     fun detect(head: ByteArray, headLength: Int, fileLength: Long): Result? {
         if (fileLength <= 0 || headLength <= 0) return null

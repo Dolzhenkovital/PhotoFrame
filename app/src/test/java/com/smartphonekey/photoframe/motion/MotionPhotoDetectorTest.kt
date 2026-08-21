@@ -83,6 +83,16 @@ class MotionPhotoDetectorTest {
     }
 
     @Test
+    fun `single quotes and whitespace around equals are legal XML`() {
+        val result = detect(
+            """<rdf:Description GCamera:MotionPhoto = '1'>
+               <Container:Item Item:Mime = 'video/mp4' Item:Length = '3000'/>""",
+            fileLength = 10_000,
+        )!!
+        assertEquals(7_000L, result.videoOffsetBytes)
+    }
+
+    @Test
     fun `plain photo yields null`() {
         assertNull(detect("<x:xmpmeta xmlns:x=\"adobe\"/>", 10_000))
         assertNull(MotionPhotoDetector.detect(ByteArray(64), 64, 10_000))

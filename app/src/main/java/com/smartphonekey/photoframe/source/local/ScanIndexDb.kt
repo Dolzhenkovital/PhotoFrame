@@ -36,7 +36,10 @@ class ScanIndexDb(context: Context) :
             // NOT_SCANNED sentinel (-2), which forces the scanner to
             // re-inspect them once — the usual size/mtime reuse would
             // otherwise keep "no video" forever for pre-migration photos.
-            db.execSQL("ALTER TABLE photos ADD COLUMN video_offset INTEGER NOT NULL DEFAULT -2")
+            db.execSQL(
+                "ALTER TABLE photos ADD COLUMN video_offset INTEGER NOT NULL " +
+                    "DEFAULT ${PhotoItem.MOTION_NOT_SCANNED}"
+            )
             db.execSQL("ALTER TABLE photos ADD COLUMN video_length INTEGER NOT NULL DEFAULT 0")
         }
     }
