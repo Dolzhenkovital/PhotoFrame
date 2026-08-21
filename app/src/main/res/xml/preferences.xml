@@ -18,6 +18,11 @@
             android:summary="@string/pref_folder_summary_none" />
 
         <Preference
+            android:key="pick_gallery"
+            android:title="@string/pref_gallery_title"
+            android:summary="@string/pref_gallery_summary_none" />
+
+        <Preference
             android:key="rescan"
             android:title="@string/pref_rescan_title" />
 

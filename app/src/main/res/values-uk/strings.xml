@@ -13,6 +13,13 @@
     <string name="scanning">Сканування…</string>
     <string name="scan_done">Знайдено фото: %1$d</string>
 
+    <string name="pref_gallery_title">Галерея пристрою</string>
+    <string name="pref_gallery_summary_none">Показувати фото, проіндексовані пристроєм, замість теки</string>
+    <string name="gallery_all_photos">Усі фотографії</string>
+    <string name="gallery_bucket_count">%1$s (%2$d)</string>
+    <string name="gallery_permission_denied">Доступ до фото відхилено — надайте його, щоб використовувати галерею</string>
+    <string name="gallery_empty">У галереї пристрою не знайдено фотографій</string>
+
     <string name="pref_source_title">Показувати фото з</string>
     <string name="source_both">Локальна тека + Google Photos</string>
     <string name="source_local">Лише локальна тека</string>

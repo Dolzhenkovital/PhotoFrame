@@ -44,9 +44,18 @@ the user asks or the folder's mtime changes. Width/height/orientation come
 from a bounds-only decode + EXIF (below) at scan time, so the slideshow can do
 orientation matching without touching files.
 
-## MediaStore alternative (only if a "whole gallery" source is added later)
+## MediaStore alternative (implemented: the "Device gallery" source)
 
-Permission matrix — every branch must exist if this path is implemented:
+Shipped as a fallback because real frame firmwares exist whose SAF provider
+is broken: the reference Allwinner frame (BGS-102K-T, Android 6.0.1) reports
+its primary volume at a path that does not exist (`/storage/emulated/sdcard`),
+so DocumentsUI cannot open "Internal storage" at all while MediaStore on the
+same firmware works fine. The provider cannot be probed from an app
+(`MANAGE_DOCUMENTS` is signature-level), so the fallback is a user-visible
+second source (`MediaStoreScanner` + "Device gallery" in settings), not
+automatic detection. SAF remains the primary mechanism.
+
+Permission matrix — every branch must exist since this path is implemented:
 
 | API | Required permission |
 |-----|--------------------|

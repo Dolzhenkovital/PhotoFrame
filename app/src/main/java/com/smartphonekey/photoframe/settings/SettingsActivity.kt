@@ -1,8 +1,11 @@
 package com.smartphonekey.photoframe.settings
 
+import android.Manifest
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.DocumentsContract
 import android.view.LayoutInflater
@@ -14,6 +17,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
@@ -24,6 +28,7 @@ import com.smartphonekey.photoframe.gphotos.GPhotosSyncManager
 import com.smartphonekey.photoframe.gphotos.GoogleAuth
 import com.smartphonekey.photoframe.gphotos.PickerUris
 import com.smartphonekey.photoframe.gphotos.QrCode
+import com.smartphonekey.photoframe.source.local.MediaStoreScanner
 import com.smartphonekey.photoframe.source.local.PhotoScanner
 import kotlin.math.max
 
@@ -38,6 +43,20 @@ class SettingsActivity : AppCompatActivity() {
     private val pickFolder =
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             if (uri != null) onFolderPicked(uri)
+        }
+
+    private val requestGalleryPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            // Result flag alone is not the whole truth: on API 34+ a partial
+            // grant reports "denied" for READ_MEDIA_IMAGES while the
+            // selection permission IS granted — re-derive from checks.
+            if (hasGalleryPermission()) {
+                showBucketPicker()
+            } else {
+                Toast.makeText(
+                    this, R.string.gallery_permission_denied, Toast.LENGTH_LONG
+                ).show()
+            }
         }
 
     private val cacheSizeListener =
@@ -114,22 +133,97 @@ class SettingsActivity : AppCompatActivity() {
             uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
         )
         app.prefs.folderUri = uri.toString()
+        app.prefs.localSourceKind = Prefs.LocalSourceKind.SAF
         currentFragment()?.updateFolderSummary()
         rescan()
     }
 
+    // --- Device gallery (MediaStore) fallback --------------------------------
+
+    fun launchGalleryPicker() {
+        if (hasGalleryPermission()) {
+            showBucketPicker()
+        } else {
+            requestGalleryPermission.launch(galleryPermission())
+        }
+    }
+
+    /** The runtime permission the current API level wants (local-photos skill). */
+    private fun galleryPermission(): String =
+        if (Build.VERSION.SDK_INT >= 33) {
+            Manifest.permission.READ_MEDIA_IMAGES // modern phone path
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE // frame path (23–32)
+        }
+
+    private fun hasGalleryPermission(): Boolean {
+        fun granted(permission: String) =
+            ContextCompat.checkSelfPermission(this, permission) ==
+                PackageManager.PERMISSION_GRANTED
+        return when {
+            Build.VERSION.SDK_INT >= 34 ->
+                // Partial access counts: the user's selection is the source,
+                // never nag for more (android-compat skill, API 34 row).
+                granted(Manifest.permission.READ_MEDIA_IMAGES) ||
+                    granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+            Build.VERSION.SDK_INT >= 33 ->
+                granted(Manifest.permission.READ_MEDIA_IMAGES)
+            else -> granted(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+    }
+
+    /** Lists MediaStore buckets and lets the user pick one (or all photos). */
+    private fun showBucketPicker() {
+        val appContext = applicationContext
+        app.ioExecutor.execute {
+            val buckets = MediaStoreScanner(appContext.contentResolver).listBuckets()
+            runOnUiThread {
+                if (isFinishing) return@runOnUiThread
+                if (buckets.isEmpty()) {
+                    Toast.makeText(this, R.string.gallery_empty, Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+                val labels = ArrayList<String>(buckets.size + 1)
+                labels.add(getString(R.string.gallery_all_photos))
+                buckets.forEach {
+                    labels.add(getString(R.string.gallery_bucket_count, it.name, it.count))
+                }
+                AlertDialog.Builder(this)
+                    .setTitle(R.string.pref_gallery_title)
+                    .setItems(labels.toTypedArray()) { _, which ->
+                        val bucket = if (which == 0) null else buckets[which - 1]
+                        app.prefs.mediaBucketId = bucket?.id
+                        app.prefs.mediaBucketName = bucket?.name
+                        app.prefs.localSourceKind = Prefs.LocalSourceKind.MEDIA_STORE
+                        currentFragment()?.updateFolderSummary()
+                        rescan()
+                    }
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show()
+            }
+        }
+    }
+
     fun rescan() {
+        val kind = app.prefs.localSourceKind
         val folder = app.prefs.folderUri
-        if (folder == null) {
+        if (kind == Prefs.LocalSourceKind.SAF && folder == null) {
             Toast.makeText(this, R.string.pref_folder_summary_none, Toast.LENGTH_SHORT).show()
             return
         }
         Toast.makeText(this, R.string.scanning, Toast.LENGTH_SHORT).show()
         val appContext = applicationContext
+        val bucketId = app.prefs.mediaBucketId
         app.ioExecutor.execute {
             val known = app.index.loadAll().associateBy { it.uri }
-            val items = PhotoScanner(appContext.contentResolver)
-                .scan(Uri.parse(folder), known)
+            val items = when (kind) {
+                Prefs.LocalSourceKind.SAF ->
+                    PhotoScanner(appContext.contentResolver)
+                        .scan(Uri.parse(folder), known)
+                Prefs.LocalSourceKind.MEDIA_STORE ->
+                    MediaStoreScanner(appContext.contentResolver)
+                        .scan(bucketId, known)
+            }
             app.index.replaceAll(items)
             runOnUiThread {
                 Toast.makeText(
@@ -319,6 +413,10 @@ class SettingsActivity : AppCompatActivity() {
                 (requireActivity() as SettingsActivity).launchFolderPicker()
                 true
             }
+            findPreference<Preference>(KEY_PICK_GALLERY)?.setOnPreferenceClickListener {
+                (requireActivity() as SettingsActivity).launchGalleryPicker()
+                true
+            }
             findPreference<Preference>(KEY_RESCAN)?.setOnPreferenceClickListener {
                 (requireActivity() as SettingsActivity).rescan()
                 true
@@ -336,9 +434,23 @@ class SettingsActivity : AppCompatActivity() {
 
         fun updateFolderSummary() {
             val prefs = (requireActivity().application as PhotoFrameApp).prefs
-            val summary = prefs.folderUri?.let { readableFolderName(it) }
-                ?: getString(R.string.pref_folder_summary_none)
-            findPreference<Preference>(KEY_PICK_FOLDER)?.summary = summary
+            val active = prefs.localSourceKind
+            val folderName = prefs.folderUri?.let { readableFolderName(it) }
+            // The active source's summary shows the concrete selection; the
+            // inactive one keeps its explainer so the user sees which of the
+            // two local pickers currently feeds the slideshow.
+            findPreference<Preference>(KEY_PICK_FOLDER)?.summary =
+                if (active == Prefs.LocalSourceKind.SAF && folderName != null) {
+                    folderName
+                } else {
+                    getString(R.string.pref_folder_summary_none)
+                }
+            findPreference<Preference>(KEY_PICK_GALLERY)?.summary =
+                if (active == Prefs.LocalSourceKind.MEDIA_STORE) {
+                    prefs.mediaBucketName ?: getString(R.string.gallery_all_photos)
+                } else {
+                    getString(R.string.pref_gallery_summary_none)
+                }
         }
 
         private fun readableFolderName(treeUri: String): String = try {
@@ -351,6 +463,7 @@ class SettingsActivity : AppCompatActivity() {
 
         companion object {
             private const val KEY_PICK_FOLDER = "pick_folder"
+            private const val KEY_PICK_GALLERY = "pick_gallery"
             private const val KEY_RESCAN = "rescan"
             private const val KEY_GP_ADD = "gp_add"
             private const val KEY_GP_CLEAR = "gp_clear"

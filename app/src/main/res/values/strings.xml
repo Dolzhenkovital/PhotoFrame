@@ -13,6 +13,13 @@
     <string name="scanning">Scanning…</string>
     <string name="scan_done">Photos found: %1$d</string>
 
+    <string name="pref_gallery_title">Device gallery</string>
+    <string name="pref_gallery_summary_none">Show photos indexed by this device instead of a folder</string>
+    <string name="gallery_all_photos">All photos</string>
+    <string name="gallery_bucket_count">%1$s (%2$d)</string>
+    <string name="gallery_permission_denied">Photo access was denied — allow it to use the device gallery</string>
+    <string name="gallery_empty">No photos found in the device gallery</string>
+
     <string name="pref_source_title">Show photos from</string>
     <string name="source_both">Local folder + Google Photos</string>
     <string name="source_local">Local folder only</string>
