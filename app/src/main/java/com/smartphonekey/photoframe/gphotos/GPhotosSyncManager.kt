@@ -31,6 +31,7 @@ class GPhotosSyncManager(
     private val api: PickerClient = PickerApi(),
     private val poster: Poster = MainThreadPoster(),
     private val clock: () -> Long = System::currentTimeMillis,
+    private val evictAfterBytes: Long = DEFAULT_EVICT_AFTER_BYTES,
 ) {
 
     /** Main-thread dispatch, abstracted for tests. */
@@ -195,21 +196,29 @@ class GPhotosSyncManager(
             post { if (gen == generation) setState(State.Downloading(0, fresh.size)) }
 
             var added = 0
+            var bytesSinceEvict = 0L
             for ((index, item) in fresh.withIndex()) {
                 if (gen != generation) break
                 val tmp = File(cache.mediaDir, cache.fileNameFor(item) + ".tmp")
                 try {
                     api.download(token, item, maxDimension, tmp)
-                    if (cache.commit(item, tmp, clock())) added++
+                    val size = tmp.length()
+                    if (cache.commit(item, tmp, clock())) {
+                        added++
+                        bytesSinceEvict += size
+                    }
                 } catch (e: Exception) {
                     tmp.delete() // one broken download must not kill the batch
                 }
-                // Evict as we go, not just at the end: a large pick could
-                // otherwise overshoot the cap by gigabytes mid-sync and fill
-                // a small frame's storage. Batched because each pass walks
-                // the whole index — every photo would be needless disk churn.
-                if (added > 0 && added % EVICT_EVERY == 0) {
+                // Evict as we go, triggered by BYTES landed rather than item
+                // count: counting items would let ten 30 MB downloads pile
+                // ~300 MB over the cap before a pass ran — enough to fill a
+                // small frame's storage. Still batched (a pass walks the
+                // whole index), but the overshoot is bounded by
+                // evictAfterBytes + one file.
+                if (bytesSinceEvict >= evictAfterBytes) {
                     cache.evictToCap(cacheCapBytes())
+                    bytesSinceEvict = 0L
                 }
                 val done = index + 1
                 post { if (gen == generation) setState(State.Downloading(done, fresh.size)) }
@@ -266,7 +275,7 @@ class GPhotosSyncManager(
     private fun post(block: () -> Unit) = poster.post(block)
 
     private companion object {
-        /** Photos between mid-sync eviction passes. */
-        const val EVICT_EVERY = 10
+        /** Bytes landed between mid-sync eviction passes (~1 large photo over). */
+        const val DEFAULT_EVICT_AFTER_BYTES = 32L * 1024 * 1024
     }
 }

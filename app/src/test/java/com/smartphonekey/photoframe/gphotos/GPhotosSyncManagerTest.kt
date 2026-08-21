@@ -50,6 +50,7 @@ class GPhotosSyncManagerTest {
         var items: List<PickedItem> = emptyList(),
         var failOnCreate: Boolean = false,
         var onDownload: (PickedItem) -> Unit = {},
+        var downloadSizeBytes: Int = 5,
     ) : PickerClient {
         val deletedSessions = ArrayList<String>()
         var createdSessions = 0
@@ -71,13 +72,14 @@ class GPhotosSyncManagerTest {
 
         override fun download(token: String, item: PickedItem, maxDimension: Int, target: File) {
             onDownload(item)
-            target.writeText("bytes")
+            target.writeBytes(ByteArray(downloadSizeBytes))
         }
     }
 
     private open class FakeStore(private val dir: File) : PhotoStore {
         val committed = ArrayList<String>()
         var evictedWithCap: Long? = null
+        var evictCalls = 0
         var capTooSmall = false
 
         override val mediaDir: File get() = dir
@@ -91,6 +93,7 @@ class GPhotosSyncManagerTest {
 
         override fun evictToCap(capBytes: Long): Boolean {
             evictedWithCap = capBytes
+            evictCalls++
             return capTooSmall
         }
     }
@@ -111,13 +114,16 @@ class GPhotosSyncManagerTest {
         store: FakeStore,
         poster: TestPoster,
         cap: Long = 1_000L,
+        clock: () -> Long = { 1_000L },
+        evictAfterBytes: Long = 32L * 1024 * 1024,
     ) = GPhotosSyncManager(
         cache = store,
         cacheCapBytes = { cap },
         ioExecutor = DirectExecutor(),
         api = api,
         poster = poster,
-        clock = { 1_000L },
+        clock = clock,
+        evictAfterBytes = evictAfterBytes,
     )
 
     // --- Tests ---------------------------------------------------------------
@@ -328,6 +334,46 @@ class GPhotosSyncManagerTest {
 
         assertEquals(1, (sync.state as State.Finished).added)
         assertEquals(listOf("good"), store.committed)
+    }
+
+    @Test
+    fun `pick timeout surfaces as timedOut failure`() {
+        val poster = TestPoster()
+        val api = FakeApi(itemsReady = false) // session timeoutMs = 1000
+        val store = FakeStore(tempDir())
+        var now = 1_000L
+        val sync = manager(api, store, poster, clock = { now })
+
+        sync.begin("token", 1280)
+        assertTrue(sync.state is State.WaitingForPick)
+        now = 10_000L // way past deadline
+        poster.runPending()
+
+        val failed = sync.state as State.Failed
+        assertTrue(failed.timedOut)
+        assertEquals(listOf("sess-1"), api.deletedSessions)
+    }
+
+    @Test
+    fun `eviction runs mid-sync once enough bytes have landed`() {
+        // Guards the storage-exhaustion path: a nearly-full cache receiving
+        // several large downloads must be trimmed as bytes land, not only at
+        // the end of the whole batch.
+        val poster = TestPoster()
+        val api = FakeApi(
+            items = (1..5).map { photo("p$it") },
+            downloadSizeBytes = 6,
+        )
+        val store = FakeStore(tempDir())
+        val sync = manager(api, store, poster, evictAfterBytes = 10L)
+
+        sync.begin("token", 1280)
+        poster.runPending()
+
+        // 6 bytes per photo, threshold 10 → passes after photos 2 and 4,
+        // plus the final pass on completion.
+        assertEquals(3, store.evictCalls)
+        assertEquals(5, (sync.state as State.Finished).added)
     }
 
     @Test

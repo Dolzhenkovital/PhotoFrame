@@ -34,11 +34,14 @@ class Prefs(context: Context) {
             else -> SourceMode.BOTH
         }
 
-    /** Google Photos cache cap; default 1 GB (caching.md). */
+    /**
+     * Google Photos cache cap; default 1 GB (caching.md). Clamped to the
+     * advertised preset range — a corrupt backup or hand-edited preference
+     * must not be able to disable eviction with an absurd value.
+     */
     val cacheSizeBytes: Long
-        get() = sp.getString(KEY_CACHE_SIZE, null)?.toLongOrNull()
-            ?.takeIf { it > 0 }
-            ?: DEFAULT_CACHE_BYTES
+        get() = (sp.getString(KEY_CACHE_SIZE, null)?.toLongOrNull() ?: DEFAULT_CACHE_BYTES)
+            .coerceIn(MIN_CACHE_BYTES, MAX_CACHE_BYTES)
 
     companion object {
         const val KEY_FOLDER_URI = "folder_uri"
@@ -47,5 +50,7 @@ class Prefs(context: Context) {
         const val KEY_SOURCE = "photo_source"
         const val KEY_CACHE_SIZE = "cache_size_bytes"
         const val DEFAULT_CACHE_BYTES = 1_073_741_824L
+        const val MIN_CACHE_BYTES = 268_435_456L // 256 MB, smallest preset
+        const val MAX_CACHE_BYTES = 4_294_967_296L // 4 GB, largest preset
     }
 }
