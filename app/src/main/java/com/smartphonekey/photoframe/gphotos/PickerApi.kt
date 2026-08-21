@@ -66,6 +66,12 @@ class PickerApi(
      * old frame needs (google-photos-picker skill).
      */
     override fun download(token: String, item: PickedItem, maxDimension: Int, target: File) {
+        // Last line of defence before the bearer token leaves the device:
+        // parsing already filters items, but this is the only place the
+        // token is actually attached, so it re-checks the host itself.
+        if (!PickerUris.isTrustedMediaBaseUrl(item.baseUrl)) {
+            throw ApiException(0, "refusing to send credentials to ${item.baseUrl}")
+        }
         val url = "${item.baseUrl}=w$maxDimension-h$maxDimension"
         val conn = open("GET", url, token)
         try {

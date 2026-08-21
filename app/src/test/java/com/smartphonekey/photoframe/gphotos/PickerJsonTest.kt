@@ -101,4 +101,33 @@ class PickerJsonTest {
         assertTrue(page.items.isEmpty())
         assertNull(page.nextPageToken)
     }
+
+    @Test(expected = org.json.JSONException::class)
+    fun `session with a non-Google pickerUri is rejected`() {
+        // Would otherwise be rendered as a QR code for the user to scan.
+        PickerJson.parseSession("""{"id": "s", "pickerUri": "https://evil.example/x"}""")
+    }
+
+    @Test
+    fun `items on a foreign host are dropped before any download`() {
+        // baseUrl is fetched with the user's bearer token — never off-host.
+        val page = PickerJson.parseMediaItemsPage(
+            """{"mediaItems": [
+                {"id": "evil", "mediaFile": {"baseUrl": "https://attacker.example/x"}},
+                {"id": "ok", "mediaFile": {"baseUrl": "https://lh3.googleusercontent.com/y"}}
+            ]}"""
+        )
+        assertEquals(1, page.items.size)
+        assertEquals("ok", page.items[0].id)
+    }
+
+    @Test
+    fun `items without an id are dropped rather than keyed by url`() {
+        val page = PickerJson.parseMediaItemsPage(
+            """{"mediaItems": [
+                {"mediaFile": {"baseUrl": "https://lh3.googleusercontent.com/y"}}
+            ]}"""
+        )
+        assertTrue(page.items.isEmpty())
+    }
 }

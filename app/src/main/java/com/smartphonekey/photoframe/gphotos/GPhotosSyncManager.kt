@@ -173,6 +173,13 @@ class GPhotosSyncManager(
                 } catch (e: Exception) {
                     tmp.delete() // one broken download must not kill the batch
                 }
+                // Evict as we go, not just at the end: a large pick could
+                // otherwise overshoot the cap by gigabytes mid-sync and fill
+                // a small frame's storage. Batched because each pass walks
+                // the whole index — every photo would be needless disk churn.
+                if (added > 0 && added % EVICT_EVERY == 0) {
+                    cache.evictToCap(cacheCapBytes())
+                }
                 val done = index + 1
                 post { if (!cancelled) setState(State.Downloading(done, fresh.size)) }
             }
@@ -217,4 +224,9 @@ class GPhotosSyncManager(
     private fun io(block: () -> Unit) = ioExecutor.execute(block)
 
     private fun post(block: () -> Unit) = poster.post(block)
+
+    private companion object {
+        /** Photos between mid-sync eviction passes. */
+        const val EVICT_EVERY = 10
+    }
 }

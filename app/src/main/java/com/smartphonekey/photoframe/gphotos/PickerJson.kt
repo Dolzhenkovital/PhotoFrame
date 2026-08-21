@@ -29,9 +29,16 @@ object PickerJson {
         // Everything downstream keys off the session id; an empty one would
         // silently produce a sync that polls a nonexistent session.
         if (id.isBlank()) throw JSONException("session id is missing")
+        val pickerUri = json.optString("pickerUri", "")
+        // Validated here, at the boundary — the URI is both opened in a
+        // browser and rendered as a QR code for the user's phone, so every
+        // consumer must be able to assume it is a real Google Photos link.
+        if (pickerUri.isNotBlank() && !PickerUris.isTrustedPickerUri(pickerUri)) {
+            throw JSONException("pickerUri is not a Google Photos URL")
+        }
         return PickerSession(
             id = id,
-            pickerUri = json.optString("pickerUri", ""),
+            pickerUri = pickerUri,
             pollIntervalMs = parseDurationMs(
                 polling?.optString("pollInterval"), DEFAULT_POLL_INTERVAL_MS
             ),
@@ -51,11 +58,17 @@ object PickerJson {
                 val item = array.optJSONObject(i) ?: continue
                 val mediaFile = item.optJSONObject("mediaFile") ?: continue
                 val baseUrl = mediaFile.optString("baseUrl", "")
-                if (baseUrl.isEmpty()) continue
+                // baseUrl is fetched with the user's bearer token, so an item
+                // pointing anywhere but Google's media hosts is dropped rather
+                // than downloaded. A missing id is dropped too: it keys the
+                // cache, and falling back to the URL would let one item
+                // masquerade as another.
+                val id = item.optString("id", "")
+                if (id.isBlank() || !PickerUris.isTrustedMediaBaseUrl(baseUrl)) continue
                 val meta = mediaFile.optJSONObject("mediaFileMetadata")
                 items.add(
                     PickedItem(
-                        id = item.optString("id", baseUrl),
+                        id = id,
                         filename = mediaFile.optString("filename", ""),
                         mimeType = mediaFile.optString("mimeType", "image/jpeg"),
                         baseUrl = baseUrl,

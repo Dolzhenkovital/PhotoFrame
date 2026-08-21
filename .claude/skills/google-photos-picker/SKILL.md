@@ -109,9 +109,15 @@ JVM-tested), `GPhotosSyncManager` (state machine, app-scoped),
 Everything the Picker API returns crosses a network boundary, so validate it
 before it reaches Android APIs or the cache:
 
-- **Never hand `pickerUri` straight to `ACTION_VIEW`.** Require `https` and a
-  Google host; an arbitrary URI would let a tampered response launch any
-  `intent:`/deep link the device can resolve.
+- **Never send the bearer token to a host you did not verify.** `baseUrl`
+  downloads attach the user's OAuth token; a tampered item pointing anywhere
+  but `*.googleusercontent.com` would hand the token to a stranger. Validate
+  at parse time AND at the point the token is attached (`PickerUris`).
+- **Never hand `pickerUri` straight to `ACTION_VIEW` or a QR code.** Require
+  `https` and exactly `photos.google.com` (no `*.google.com` wildcard — far
+  too broad), and reject authority tricks like `https://photos.google.com@evil`.
+  The QR path matters as much as the button: the user scans it with their
+  personal phone.
 - **Never index a downloaded file without a successful bounds decode.** An
   HTML or JSON error body served with a 2xx status would otherwise enter the
   cache as a "photo" and break the slideshow on every cycle. Delete it

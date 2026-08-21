@@ -21,6 +21,7 @@ import com.smartphonekey.photoframe.PhotoFrameApp
 import com.smartphonekey.photoframe.R
 import com.smartphonekey.photoframe.gphotos.GPhotosSyncManager
 import com.smartphonekey.photoframe.gphotos.GoogleAuth
+import com.smartphonekey.photoframe.gphotos.PickerUris
 import com.smartphonekey.photoframe.gphotos.QrCode
 import com.smartphonekey.photoframe.source.local.PhotoScanner
 import kotlin.math.max
@@ -271,30 +272,18 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun openPickerLocally(pickerUri: String) {
-        // pickerUri arrives over the network. Handing an arbitrary URI to
-        // ACTION_VIEW would let a tampered response launch anything the
-        // device can resolve (intent:, custom schemes, deep links), so only
-        // an https Google Photos URL is ever opened.
-        val uri = try {
-            Uri.parse(pickerUri)
-        } catch (e: Exception) {
-            null
-        }
-        if (uri == null || !isTrustedPickerUri(uri)) {
+        // Parsing already rejects a non-Google pickerUri, but this is the
+        // point where an arbitrary URI would become a launched intent, so it
+        // is re-checked rather than assumed.
+        if (!PickerUris.isTrustedPickerUri(pickerUri)) {
             Toast.makeText(this, R.string.gp_bad_picker_uri, Toast.LENGTH_LONG).show()
             return
         }
         try {
-            startActivity(Intent(Intent.ACTION_VIEW, uri))
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(pickerUri)))
         } catch (e: Exception) {
             Toast.makeText(this, R.string.gp_no_browser, Toast.LENGTH_LONG).show()
         }
-    }
-
-    private fun isTrustedPickerUri(uri: Uri): Boolean {
-        if (!"https".equals(uri.scheme, ignoreCase = true)) return false
-        val host = uri.host?.lowercase() ?: return false
-        return TRUSTED_PICKER_HOSTS.any { host == it || host.endsWith(".$it") }
     }
 
     private fun currentFragment(): SettingsFragment? =
@@ -348,7 +337,5 @@ class SettingsActivity : AppCompatActivity() {
 
     companion object {
         private const val QR_SIZE_PX = 512
-
-        private val TRUSTED_PICKER_HOSTS = listOf("photos.google.com", "google.com")
     }
 }
