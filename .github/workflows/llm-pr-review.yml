@@ -1,0 +1,73 @@
+name: LLM PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: llm-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      # secrets.* is not available in job-level `if`, so gate via a step output.
+      # Fork PRs get no secrets — the workflow then skips gracefully.
+      - name: Check OPENAI_API_KEY availability
+        id: key
+        run: |
+          if [ -n "$OPENAI_API_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::OPENAI_API_KEY secret is not set — skipping LLM review."
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.present == 'true'
+
+      - name: Collect PR diff
+        if: steps.key.outputs.present == 'true'
+        run: |
+          gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" > pr.diff
+          echo "Diff size: $(wc -c < pr.diff) bytes"
+
+      - name: Run LLM review
+        if: steps.key.outputs.present == 'true'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          {
+            printf 'PR title: %s\n' "$PR_TITLE"
+            printf 'PR description:\n%s\n' "$PR_BODY"
+          } > pr_context.txt
+          python3 .github/scripts/llm_ci.py review --context pr_context.txt < pr.diff > review.md
+
+      - name: Post or update review comment
+        if: steps.key.outputs.present == 'true'
+        run: |
+          marker='<!-- llm-pr-review -->'
+          printf '%s\n\n' "$marker" | cat - review.md > comment.md
+          existing_id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+            --paginate --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -n1)
+          if [ -n "$existing_id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing_id" \
+              -F body=@comment.md > /dev/null
+            echo "Updated existing review comment $existing_id"
+          else
+            gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file comment.md
+            echo "Posted new review comment"
+          fi

@@ -1,0 +1,72 @@
+name: CI Failure Analysis
+
+# When "Android CI" fails, ask the LLM to read the failed logs and post
+# a diagnosis as a comment on the related PR (or commit, for pushes to main).
+
+on:
+  workflow_run:
+    workflows: ["Android CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  analyze:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+      GH_TOKEN: ${{ github.token }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Check OPENAI_API_KEY availability
+        id: key
+        run: |
+          if [ -n "$OPENAI_API_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::OPENAI_API_KEY secret is not set — skipping failure analysis."
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.present == 'true'
+
+      - name: Download failed-step logs
+        if: steps.key.outputs.present == 'true'
+        run: |
+          gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --log-failed > failed.log \
+            || gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --log > failed.log
+          echo "Log size: $(wc -c < failed.log) bytes"
+
+      - name: Analyze failure with LLM
+        if: steps.key.outputs.present == 'true'
+        run: |
+          python3 .github/scripts/llm_ci.py failure < failed.log > analysis.md
+
+      - name: Comment on PR or commit
+        if: steps.key.outputs.present == 'true'
+        run: |
+          marker="<!-- llm-ci-failure-$RUN_ID -->"
+          printf '%s\n\n### 🤖 CI failure analysis (run [%s](%s))\n\n' \
+            "$marker" "$RUN_ID" \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" \
+            | cat - analysis.md > comment.md
+          # workflow_run.pull_requests is unreliable; resolve the PR via the API.
+          pr_number=$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/pulls" \
+            --jq '.[0].number // empty' 2>/dev/null | head -n1)
+          if [ -n "$pr_number" ]; then
+            gh pr comment "$pr_number" --repo "$GITHUB_REPOSITORY" --body-file comment.md
+            echo "Commented on PR #$pr_number"
+          else
+            gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/comments" \
+              -F body=@comment.md > /dev/null
+            echo "Commented on commit $HEAD_SHA"
+          fi
