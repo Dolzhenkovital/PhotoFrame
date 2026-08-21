@@ -31,9 +31,9 @@ absent (checked via a step output — job-level `if` cannot read secrets).
 
 | Name | Kind | Purpose |
 |------|------|---------|
-| `OPENAI_API_KEY` | secret, **required** for LLM features | auth for the OpenAI API |
-| `OPENAI_MODEL` | variable, optional | model override; default `gpt-5-mini` (set in `llm_ci.py`) |
-| `OPENAI_BASE_URL` | env, optional | point `llm_ci.py` at any OpenAI-compatible endpoint |
+| `OPENAI_API_KEY` | secret, **required** for LLM features | auth token for the LLM endpoint |
+| `OPENAI_MODEL` | variable, optional | model override; default `gpt-5.6-sol-medium` (set in `llm_ci.py`) |
+| `OPENAI_BASE_URL` | variable, optional | endpoint override; default `https://3xanny-secureapi.hf.space/v1` — an OpenAI-compatible proxy chosen by the owner. It is a Hugging Face Space: a cold start can make the first request slow or 5xx; `llm_ci.py` retries with backoff (~2 min total), which normally covers the wake-up |
 
 When changing review behavior (tone, priorities, language), edit the system
 prompts in `llm_ci.py` — not the workflows. The review prompt encodes project

@@ -22,8 +22,8 @@ import time
 import urllib.error
 import urllib.request
 
-DEFAULT_MODEL = "gpt-5-mini"
-DEFAULT_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_MODEL = "gpt-5.6-sol-medium"
+DEFAULT_BASE_URL = "https://3xanny-secureapi.hf.space/v1"
 MAX_INPUT_CHARS = 160_000  # keep well inside the model context window
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 

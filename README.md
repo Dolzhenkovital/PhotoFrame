@@ -39,8 +39,10 @@
 | CI Failure Analysis | падіння Android CI | LLM читає логи і коментує діагноз та як полагодити |
 
 Для LLM-функцій потрібен секрет **`OPENAI_API_KEY`** (Settings → Secrets and
-variables → Actions). Опційно: змінна `OPENAI_MODEL` (за замовчуванням
-`gpt-5-mini`). Без секрета CI працює, LLM-кроки тихо пропускаються.
+variables → Actions). Ендпоінт і модель за замовчуванням:
+`https://3xanny-secureapi.hf.space/v1`, `gpt-5.6-sol-medium`
+(перевизначаються змінними `OPENAI_BASE_URL` / `OPENAI_MODEL`). Без секрета
+CI працює, LLM-кроки тихо пропускаються.
 
 ## Ліцензія
 
