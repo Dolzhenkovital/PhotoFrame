@@ -14,6 +14,9 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+
+        // Ship only the locales we actually translate — smaller APK.
+        resourceConfigurations += listOf("en", "uk")
     }
 
     buildTypes {
@@ -40,6 +43,9 @@ android {
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.preference)
+    implementation(libs.androidx.exifinterface)
+    implementation(libs.glide)
 
     testImplementation(libs.junit)
 }

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <PreferenceCategory android:title="@string/cat_source">
+
+        <Preference
+            android:key="pick_folder"
+            android:title="@string/pref_folder_title"
+            android:summary="@string/pref_folder_summary_none" />
+
+        <Preference
+            android:key="rescan"
+            android:title="@string/pref_rescan_title" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory android:title="@string/cat_slideshow">
+
+        <ListPreference
+            android:key="interval_seconds"
+            android:title="@string/pref_interval_title"
+            android:entries="@array/interval_entries"
+            android:entryValues="@array/interval_values"
+            android:defaultValue="30"
+            app:useSimpleSummaryProvider="true" />
+
+        <ListPreference
+            android:key="transition_effect"
+            android:title="@string/pref_transition_title"
+            android:entries="@array/transition_entries"
+            android:entryValues="@array/transition_values"
+            android:defaultValue="CROSSFADE"
+            app:useSimpleSummaryProvider="true" />
+
+    </PreferenceCategory>
+
+</PreferenceScreen>

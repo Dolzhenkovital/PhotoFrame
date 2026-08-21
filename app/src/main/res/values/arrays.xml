@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Values must stay in sync with core/SlideshowIntervals.presetsSeconds -->
+    <string-array name="interval_values">
+        <item>5</item>
+        <item>10</item>
+        <item>15</item>
+        <item>30</item>
+        <item>60</item>
+        <item>120</item>
+        <item>300</item>
+        <item>600</item>
+        <item>1800</item>
+        <item>3600</item>
+    </string-array>
+
+    <string-array name="interval_entries">
+        <item>@string/interval_5s</item>
+        <item>@string/interval_10s</item>
+        <item>@string/interval_15s</item>
+        <item>@string/interval_30s</item>
+        <item>@string/interval_1m</item>
+        <item>@string/interval_2m</item>
+        <item>@string/interval_5m</item>
+        <item>@string/interval_10m</item>
+        <item>@string/interval_30m</item>
+        <item>@string/interval_1h</item>
+    </string-array>
+
+    <!-- Values must stay in sync with slideshow/TransitionEffect enum names -->
+    <string-array name="transition_values">
+        <item>CROSSFADE</item>
+        <item>FADE_BLACK</item>
+        <item>SLIDE_LEFT</item>
+        <item>SLIDE_RIGHT</item>
+        <item>SLIDE_UP</item>
+        <item>SLIDE_DOWN</item>
+        <item>ZOOM_IN</item>
+        <item>ZOOM_OUT</item>
+        <item>KEN_BURNS</item>
+        <item>ROTATE_FADE</item>
+        <item>RANDOM</item>
+    </string-array>
+
+    <string-array name="transition_entries">
+        <item>@string/effect_crossfade</item>
+        <item>@string/effect_fade_black</item>
+        <item>@string/effect_slide_left</item>
+        <item>@string/effect_slide_right</item>
+        <item>@string/effect_slide_up</item>
+        <item>@string/effect_slide_down</item>
+        <item>@string/effect_zoom_in</item>
+        <item>@string/effect_zoom_out</item>
+        <item>@string/effect_ken_burns</item>
+        <item>@string/effect_rotate_fade</item>
+        <item>@string/effect_random</item>
+    </string-array>
+</resources>

@@ -3,11 +3,17 @@ agp = "8.7.3"
 kotlin = "2.0.21"
 coreKtx = "1.15.0"
 appcompat = "1.7.0"
+preference = "1.2.1"
+exifinterface = "1.3.7"
+glide = "4.16.0"
 junit = "4.13.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+androidx-preference = { group = "androidx.preference", name = "preference-ktx", version.ref = "preference" }
+androidx-exifinterface = { group = "androidx.exifinterface", name = "exifinterface", version.ref = "exifinterface" }
+glide = { group = "com.github.bumptech.glide", name = "glide", version.ref = "glide" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]
