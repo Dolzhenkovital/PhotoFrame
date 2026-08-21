@@ -25,6 +25,7 @@
     <string name="pref_gp_clear_title">Clear Google Photos cache</string>
     <string name="gp_clear_confirm">Delete all downloaded Google Photos from this device?</string>
     <string name="gp_cleared">Google Photos cache cleared</string>
+    <string name="gp_clear_while_sync">Finish or cancel the running sync first</string>
     <string name="gp_cache_too_small">Cache size is too small for the selected photos</string>
     <string name="cache_256mb">256 MB</string>
     <string name="cache_512mb">512 MB</string>

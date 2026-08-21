@@ -94,7 +94,8 @@ class PickerApi(
                 // A hostile or broken 2xx body could otherwise stream until
                 // the frame's storage is full — the cache cap only governs
                 // committed files, not a single runaway download.
-                val declared = conn.contentLengthLong
+                // (Read via header: contentLengthLong needs API 24, minSdk is 23.)
+                val declared = conn.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
                 if (declared > MAX_DOWNLOAD_BYTES) {
                     throw ApiException(code, "media too large: $declared bytes")
                 }

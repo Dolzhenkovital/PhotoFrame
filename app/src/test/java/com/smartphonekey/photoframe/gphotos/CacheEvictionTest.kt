@@ -83,6 +83,24 @@ class CacheEvictionTest {
     }
 
     @Test
+    fun `failed deletions count back into the retained total`() {
+        // Plan says "evict old, keep 800 of 1200" — but if old's file can't
+        // be deleted its 400 bytes are still on disk and must be judged.
+        val plan = CacheEviction.plan(
+            listOf(
+                entry("old", 400, shown = 1),
+                entry("a", 400, shown = 50),
+                entry("b", 400, shown = 90),
+            ),
+            capBytes = 800,
+            minKeep = 1,
+        )
+        assertEquals(800L, plan.retainedBytes)
+        val actual = CacheEviction.addBackFailedVictim(plan.retainedBytes, 400)
+        assertTrue("cap status must reflect the failed delete", actual > 800)
+    }
+
+    @Test
     fun `retained set fitting the cap reports no overshoot`() {
         val entries = (1..25).map { entry("e$it", 100, shown = it.toLong()) }
         val plan = CacheEviction.plan(entries, capBytes = 2100, minKeep = 20)

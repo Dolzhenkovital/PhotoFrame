@@ -72,7 +72,9 @@ class GPhotosSyncManager(
     @Volatile
     private var generation = 0
 
-    private var listener: Listener? = null
+    // Several observers at once: the settings dialog renders progress while
+    // the slideshow listens for Finished to reload its queue.
+    private val listeners = java.util.concurrent.CopyOnWriteArrayList<Listener>()
 
     // Tracked only so cancel() can clean up the server-side session.
     // Written on the main thread under the current generation.
@@ -87,19 +89,20 @@ class GPhotosSyncManager(
             state is State.WaitingForPick ||
             state is State.Downloading
 
-    /** UI attaches to observe; immediately receives the current state. */
-    fun attach(listener: Listener) {
-        this.listener = listener
-        listener.onState(state)
+    /**
+     * Starts observing. With [replay] the listener immediately receives the
+     * current state — what a re-opened progress dialog needs; an observer
+     * that only reacts to *transitions* (the slideshow reloading on
+     * Finished) passes false so a stale terminal state isn't re-delivered.
+     */
+    fun attach(listener: Listener, replay: Boolean = true) {
+        listeners.addIfAbsent(listener)
+        if (replay) listener.onState(state)
     }
 
-    /**
-     * Removes [listener] only if it is still the attached one — an old
-     * Activity being destroyed must not detach the observer a newer
-     * Activity has installed.
-     */
+    /** Removes exactly [listener]; other observers are untouched. */
     fun detach(listener: Listener) {
-        if (this.listener === listener) this.listener = null
+        listeners.remove(listener)
     }
 
     fun begin(token: String, maxDimension: Int) {
@@ -247,7 +250,7 @@ class GPhotosSyncManager(
 
     private fun setState(newState: State) {
         state = newState
-        listener?.onState(newState)
+        listeners.forEach { it.onState(newState) }
     }
 
     private fun io(block: () -> Unit) = ioExecutor.execute(block)

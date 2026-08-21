@@ -14,6 +14,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import com.smartphonekey.photoframe.core.PhotoOrientation
 import com.smartphonekey.photoframe.core.PlaybackQueue
+import com.smartphonekey.photoframe.gphotos.GPhotosSyncManager
 import com.smartphonekey.photoframe.settings.Prefs
 import com.smartphonekey.photoframe.settings.SettingsActivity
 import com.smartphonekey.photoframe.slideshow.SlideshowController
@@ -25,6 +26,15 @@ class MainActivity : AppCompatActivity(), SlideshowController.Listener {
     private lateinit var controller: SlideshowController
     private lateinit var emptyGroup: View
     private lateinit var emptyText: TextView
+
+    // A sync can finish while this screen is already showing (the user
+    // closed settings mid-download) — reload so the new photos appear now,
+    // not on the next resume. Transitions only: no replay on attach.
+    private val syncListener = GPhotosSyncManager.Listener { state ->
+        if (state is GPhotosSyncManager.State.Finished && state.added > 0) {
+            reloadAndStart()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -54,10 +64,12 @@ class MainActivity : AppCompatActivity(), SlideshowController.Listener {
     override fun onResume() {
         super.onResume()
         hideSystemUi()
+        app.gphotosSync.attach(syncListener, replay = false)
         reloadAndStart()
     }
 
     override fun onPause() {
+        app.gphotosSync.detach(syncListener)
         controller.stop()
         // Persist the batched last-shown timestamps for LRU eviction.
         app.ioExecutor.execute { app.gphotosCache.flush() }

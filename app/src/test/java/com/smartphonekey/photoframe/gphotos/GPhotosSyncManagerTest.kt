@@ -274,6 +274,40 @@ class GPhotosSyncManagerTest {
     }
 
     @Test
+    fun `transition-only listeners get no replay but see new states`() {
+        val poster = TestPoster()
+        val api = FakeApi(items = listOf(photo("a")))
+        val store = FakeStore(tempDir())
+        val sync = manager(api, store, poster)
+        sync.begin("token", 1280)
+
+        // The slideshow attaches after the fact and must NOT react to the
+        // stale current state — only to transitions from now on.
+        val seen = ArrayList<State>()
+        sync.attach({ seen.add(it) }, replay = false)
+        assertTrue(seen.isEmpty())
+        poster.runPending()
+        assertTrue(seen.any { it is State.Finished })
+    }
+
+    @Test
+    fun `detaching one listener leaves the others attached`() {
+        val poster = TestPoster()
+        val api = FakeApi(itemsReady = false)
+        val store = FakeStore(tempDir())
+        val sync = manager(api, store, poster)
+        val kept = ArrayList<State>()
+        val keeper = GPhotosSyncManager.Listener { kept.add(it) }
+        val leaver = GPhotosSyncManager.Listener { }
+        sync.attach(keeper)
+        sync.attach(leaver)
+        sync.detach(leaver)
+
+        sync.begin("token", 1280)
+        assertTrue(kept.any { it is State.WaitingForPick })
+    }
+
+    @Test
     fun `items rejected by the cache are not counted as added`() {
         val poster = TestPoster()
         val api = FakeApi(items = listOf(photo("good"), photo("corrupt")))

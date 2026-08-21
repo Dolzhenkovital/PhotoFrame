@@ -26,6 +26,13 @@ object CacheEviction {
     data class Plan(val victimIds: List<String>, val retainedBytes: Long)
 
     /**
+     * A planned victim whose file could not be deleted is still on disk —
+     * its bytes belong back in the retained total before judging the cap.
+     */
+    fun addBackFailedVictim(retainedBytes: Long, failedVictimBytes: Long): Long =
+        retainedBytes + failedVictimBytes
+
+    /**
      * Plans an eviction: least-recently-USED first, until the total fits
      * [capBytes] — but never shrinking the set below [minKeep] items when
      * more than [minKeep] exist (better an over-budget cache than a frame

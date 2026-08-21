@@ -148,6 +148,12 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     fun clearGooglePhotosCache() {
+        // Clearing mid-sync would race the downloader: it keeps writing new
+        // files right after the wipe, making the confirmed clear a no-op.
+        if (app.gphotosSync.isActive) {
+            Toast.makeText(this, R.string.gp_clear_while_sync, Toast.LENGTH_LONG).show()
+            return
+        }
         AlertDialog.Builder(this)
             .setTitle(R.string.pref_gp_clear_title)
             .setMessage(R.string.gp_clear_confirm)
