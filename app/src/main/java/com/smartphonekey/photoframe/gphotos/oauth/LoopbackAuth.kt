@@ -49,6 +49,46 @@ class LoopbackAuth(
     private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
 
+    /**
+     * App-scoped consumer of every fresh access token — set once at startup
+     * (PhotoFrameApp wires it to start the sync). Consent happens in an
+     * external browser and can outlive any Activity, so the action taken on
+     * a token must not live in one.
+     */
+    @Volatile
+    var onAccessToken: ((String) -> Unit)? = null
+
+    /**
+     * UI half of the callbacks: toasts and the sync dialog. One replaceable
+     * slot instead of a captured reference — a recreated Settings screen
+     * re-attaches and REPLACES the old one, so a 10-minute pending flow
+     * never pins a destroyed Activity (PR #11 review).
+     */
+    @Volatile
+    private var uiListener: Listener? = null
+
+    fun attachUi(listener: Listener) {
+        uiListener = listener
+    }
+
+    /** Detach only if [listener] is still the attached one (mirror of attachUi). */
+    fun detachUi(listener: Listener) {
+        if (uiListener === listener) uiListener = null
+    }
+
+    // Both callbacks resolve the CURRENT consumers at delivery time — never
+    // the ones captured when the flow began.
+    private fun deliverToken(accessToken: String) {
+        main.post {
+            onAccessToken?.invoke(accessToken)
+            uiListener?.onToken(accessToken)
+        }
+    }
+
+    private fun deliverError(detail: String?, userCancelled: Boolean) {
+        main.post { uiListener?.onError(detail, userCancelled) }
+    }
+
     /** True when a Desktop OAuth client is configured into the build. */
     val isConfigured: Boolean
         get() = clientId.isNotEmpty() && clientSecret.isNotEmpty()
@@ -70,53 +110,54 @@ class LoopbackAuth(
     /**
      * Produces an access token without UI when possible: cached token first,
      * then a silent refresh. Falls back to [beginAuthorization] (browser
-     * consent) only when [interactive] allows it.
+     * consent) only when [interactive] allows it. Results arrive through
+     * [onAccessToken] and the attached UI listener.
      */
-    fun requestAccessToken(interactive: Boolean, listener: Listener) {
+    fun requestAccessToken(interactive: Boolean) {
         if (!isConfigured) {
-            main.post { listener.onError("OAuth client not configured", false) }
+            deliverError("OAuth client not configured", false)
             return
         }
         store.validAccessToken(System.currentTimeMillis())?.let { cached ->
-            main.post { listener.onToken(cached) }
+            deliverToken(cached)
             return
         }
         val refresh = store.refreshToken
         if (refresh != null) {
-            ioExecutor.execute { refreshBlocking(refresh, interactive, listener) }
+            ioExecutor.execute { refreshBlocking(refresh, interactive) }
             return
         }
         if (interactive) {
-            beginAuthorization(listener)
+            beginAuthorization()
         } else {
-            main.post { listener.onError(null, false) }
+            deliverError(null, false)
         }
     }
 
-    private fun refreshBlocking(refreshToken: String, interactive: Boolean, listener: Listener) {
+    private fun refreshBlocking(refreshToken: String, interactive: Boolean) {
         try {
             val tokens = postTokenEndpoint(
                 AuthProtocol.refreshBody(clientId, clientSecret, refreshToken)
             )
             storeTokens(tokens)
-            main.post { listener.onToken(tokens.accessToken) }
+            deliverToken(tokens.accessToken)
         } catch (e: Exception) {
             if (TokenJson.isInvalidGrant(e)) {
                 // The grant is dead (revoked, or expired for a Testing-mode
                 // consent screen) — only a fresh consent can help.
                 store.clear()
                 if (interactive) {
-                    main.post { beginAuthorization(listener) }
+                    main.post { beginAuthorization() }
                     return
                 }
             }
             Log.w(TAG, "Token refresh failed: ${e.message}")
-            main.post { listener.onError(e.message, false) }
+            deliverError(e.message, false)
         }
     }
 
     /** Starts (or re-shows) browser consent. Call on the main thread. */
-    private fun beginAuthorization(listener: Listener) {
+    private fun beginAuthorization() {
         val flow: PendingFlow
         synchronized(this) {
             val existing = pending
@@ -129,10 +170,9 @@ class LoopbackAuth(
                     // OAuth clients accept any loopback port by design.
                     ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
                 } catch (e: IOException) {
-                    main.post { listener.onError(e.message, false) }
+                    deliverError(e.message, false)
                     return
                 }
-                server.soTimeout = ACCEPT_TIMEOUT_MS
                 val verifier = Pkce.newVerifier()
                 val state = Pkce.newState()
                 flow = PendingFlow(
@@ -150,7 +190,7 @@ class LoopbackAuth(
                     ),
                 )
                 pending = flow
-                ioExecutor.execute { listenBlocking(flow, listener) }
+                ioExecutor.execute { listenBlocking(flow) }
             }
         }
         try {
@@ -160,7 +200,7 @@ class LoopbackAuth(
             )
         } catch (e: Exception) {
             cancel()
-            main.post { listener.onError("no browser", false) }
+            deliverError("no browser", false)
         }
     }
 
@@ -174,14 +214,25 @@ class LoopbackAuth(
         }
     }
 
-    private fun listenBlocking(flow: PendingFlow, listener: Listener) {
+    private fun listenBlocking(flow: PendingFlow) {
         val deadline = System.currentTimeMillis() + FLOW_TIMEOUT_MS
         var outcome: AuthProtocol.Redirect? = null
         try {
             // Browsers probe with favicon/preconnect requests; serve and
             // ignore anything that is not our redirect until the deadline.
-            while (System.currentTimeMillis() < deadline) {
-                val socket = flow.server.accept()
+            // Every accept() is bounded by the REMAINING deadline — a probe
+            // landing at minute 9 must not arm another full window, or any
+            // local app could keep the socket occupied indefinitely.
+            while (true) {
+                val remainingMs = deadline - System.currentTimeMillis()
+                if (remainingMs <= 0) break
+                flow.server.soTimeout =
+                    remainingMs.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                val socket = try {
+                    flow.server.accept()
+                } catch (e: java.net.SocketTimeoutException) {
+                    break // deadline reached with no redirect → timeout
+                }
                 val redirect = socket.use { handleConnection(it, flow.state) }
                 if (redirect !is AuthProtocol.Redirect.Ignore) {
                     outcome = redirect
@@ -193,7 +244,7 @@ class LoopbackAuth(
             return
         } catch (e: IOException) {
             finishFlow(flow)
-            main.post { listener.onError(e.message, false) }
+            deliverError(e.message, false)
             return
         } finally {
             try {
@@ -205,12 +256,12 @@ class LoopbackAuth(
 
         finishFlow(flow)
         when (outcome) {
-            is AuthProtocol.Redirect.Code -> exchangeBlocking(flow, outcome.code, listener)
+            is AuthProtocol.Redirect.Code -> exchangeBlocking(flow, outcome.code)
             is AuthProtocol.Redirect.Error -> {
                 val cancelled = outcome.error == "access_denied"
-                main.post { listener.onError(outcome.error, cancelled) }
+                deliverError(outcome.error, cancelled)
             }
-            else -> main.post { listener.onError("timeout", false) }
+            else -> deliverError("timeout", false)
         }
     }
 
@@ -228,8 +279,11 @@ class LoopbackAuth(
             InputStreamReader(socket.getInputStream(), Charsets.ISO_8859_1)
         )
         val requestLine = reader.readLine() ?: return AuthProtocol.Redirect.Ignore
-        // Drain headers so the browser sees a clean HTTP exchange.
-        while (true) {
+        // Drain headers so the browser sees a clean HTTP exchange. Bounded:
+        // a peer feeding endless header lines must not hold the flow — the
+        // 10s socket read timeout caps a SLOW peer, this caps a chatty one.
+        var headerLines = 0
+        while (headerLines++ < MAX_HEADER_LINES) {
             val line = reader.readLine() ?: break
             if (line.isEmpty()) break
         }
@@ -252,7 +306,7 @@ class LoopbackAuth(
         return redirect
     }
 
-    private fun exchangeBlocking(flow: PendingFlow, code: String, listener: Listener) {
+    private fun exchangeBlocking(flow: PendingFlow, code: String) {
         try {
             val tokens = postTokenEndpoint(
                 AuthProtocol.codeExchangeBody(
@@ -264,10 +318,10 @@ class LoopbackAuth(
                 )
             )
             storeTokens(tokens)
-            main.post { listener.onToken(tokens.accessToken) }
+            deliverToken(tokens.accessToken)
         } catch (e: Exception) {
             Log.w(TAG, "Code exchange failed: ${e.message}")
-            main.post { listener.onError(e.message, false) }
+            deliverError(e.message, false)
         }
     }
 
@@ -316,9 +370,10 @@ class LoopbackAuth(
         // 10 minutes, measured against reality: the first sign-in on a frame
         // means typing a password on a touch panel, maybe adding a Test user
         // in another room — 5 minutes was observed to expire mid-consent.
-        const val ACCEPT_TIMEOUT_MS = 10 * 60 * 1000 // one accept() wait
+        // Per-accept() timeouts are derived from the REMAINING window.
         const val FLOW_TIMEOUT_MS = 10 * 60 * 1000L // whole consent window
         const val SOCKET_READ_TIMEOUT_MS = 10 * 1000
+        const val MAX_HEADER_LINES = 100
         const val HTTP_TIMEOUT_MS = 30 * 1000
 
         // Plain-ASCII pages: the browser on the frame may predate emoji and

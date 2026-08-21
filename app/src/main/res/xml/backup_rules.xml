@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API 23–30 Auto Backup rules. The OAuth token store must never leave
+     the device: a restored refresh token would grant Google Photos access
+     from whatever device the backup lands on (PR #11 review). -->
+<full-backup-content>
+    <exclude
+        domain="sharedpref"
+        path="gphotos_auth.xml" />
+</full-backup-content>

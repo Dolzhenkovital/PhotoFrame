@@ -63,10 +63,23 @@ class PhotoFrameApp : Application() {
             clientId = BuildConfig.GP_OAUTH_CLIENT_ID,
             clientSecret = BuildConfig.GP_OAUTH_CLIENT_SECRET,
         )
+        // The action taken on a fresh token must not live in an Activity:
+        // the user may wander back from the browser minutes after Settings
+        // died. Any visible screen re-attaches to the sync's state on
+        // resume, so starting it here is enough.
+        gphotosAuth.onAccessToken = { token ->
+            gphotosSync.begin(token, syncTargetDimension())
+        }
         // Heal any half-written cache files from a previous crash.
         ioExecutor.execute { gphotosCache.sweep() }
         // Old frames: keep Glide's memory cache small; our two-view slideshow
         // needs almost nothing cached (low-end-performance skill).
         Glide.get(this).setMemoryCategory(MemoryCategory.LOW)
+    }
+
+    /** Screen-fitting download size: enough pixels, never 12MP originals. */
+    fun syncTargetDimension(): Int {
+        val metrics = resources.displayMetrics
+        return maxOf(metrics.widthPixels, metrics.heightPixels).coerceIn(1280, 2048)
     }
 }

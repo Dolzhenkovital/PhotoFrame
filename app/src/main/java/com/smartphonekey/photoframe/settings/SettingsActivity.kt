@@ -30,7 +30,6 @@ import com.smartphonekey.photoframe.gphotos.QrCode
 import com.smartphonekey.photoframe.gphotos.oauth.LoopbackAuth
 import com.smartphonekey.photoframe.source.local.MediaStoreScanner
 import com.smartphonekey.photoframe.source.local.PhotoScanner
-import kotlin.math.max
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -40,13 +39,15 @@ class SettingsActivity : AppCompatActivity() {
     private var syncListener: GPhotosSyncManager.Listener? = null
 
     /**
-     * Auth callbacks are app-scoped (browser consent can outlive this
-     * screen), so the sync start must not depend on this Activity being
-     * alive — only the UI bits are gated on lifecycle state.
+     * UI half of the auth callbacks only — the sync itself is started by
+     * PhotoFrameApp's app-scoped onAccessToken hook, so nothing here is
+     * load-bearing. Attached as a replaceable slot in onResume (a recreated
+     * screen replaces the old one) and detached in onDestroy: a pending
+     * browser-consent flow never retains a dead Activity.
      */
     private val authListener = object : LoopbackAuth.Listener {
         override fun onToken(accessToken: String) {
-            app.gphotosSync.begin(accessToken, targetDimension())
+            // The app-scoped hook has already begun the sync.
             if (!isFinishing &&
                 lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
             ) {
@@ -108,6 +109,7 @@ class SettingsActivity : AppCompatActivity() {
         super.onResume()
         PreferenceManager.getDefaultSharedPreferences(this)
             .registerOnSharedPreferenceChangeListener(cacheSizeListener)
+        app.gphotosAuth.attachUi(authListener)
         // Sync may still be running from a previous visit, or the auth
         // callback may have landed while we were not resumed — reattach.
         if (app.gphotosSync.isActive) showSyncDialog()
@@ -122,6 +124,7 @@ class SettingsActivity : AppCompatActivity() {
     override fun onDestroy() {
         // Detach only our own observer: during recreation the new Activity
         // may already have attached its listener, which must survive.
+        app.gphotosAuth.detachUi(authListener)
         syncListener?.let { app.gphotosSync.detach(it) }
         syncListener = null
         syncDialog?.dismiss()
@@ -260,7 +263,7 @@ class SettingsActivity : AppCompatActivity() {
             // look before the screen visibly "does nothing".
             Toast.makeText(this, R.string.gp_continue_in_browser, Toast.LENGTH_LONG).show()
         }
-        app.gphotosAuth.requestAccessToken(interactive = true, listener = authListener)
+        app.gphotosAuth.requestAccessToken(interactive = true)
     }
 
     fun clearGooglePhotosCache() {
@@ -298,12 +301,6 @@ class SettingsActivity : AppCompatActivity() {
                 }
             }
         }
-    }
-
-    /** Screen-fitting download size: enough pixels, never 12MP originals. */
-    private fun targetDimension(): Int {
-        val metrics = resources.displayMetrics
-        return max(metrics.widthPixels, metrics.heightPixels).coerceIn(1280, 2048)
     }
 
     // --- Sync dialog ---------------------------------------------------------
