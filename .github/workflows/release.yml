@@ -35,6 +35,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          # Don't leave the write-capable token in .git/config where the
+          # tagged commit's Gradle code (which runs next to the signing
+          # secrets) could read it. Anonymous fetches still work — public repo.
+          persist-credentials: false
 
       # Releases are built only from code that went through the PR process:
       # a tag pointing at a commit outside main's history is refused before

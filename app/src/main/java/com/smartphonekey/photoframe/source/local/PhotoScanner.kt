@@ -25,6 +25,11 @@ import java.io.ByteArrayInputStream
  */
 class PhotoScanner(private val resolver: ContentResolver) {
 
+    // Synchronized because the instance holds a reusable head buffer: two
+    // concurrent scans on one instance would corrupt each other's parsing.
+    // (Callers create a PhotoScanner per rescan anyway; this makes the
+    // shared-instance case safe instead of silently wrong.)
+    @Synchronized
     fun scan(treeUri: Uri, known: Map<String, PhotoItem>): List<PhotoItem> {
         val out = ArrayList<PhotoItem>()
         val dirs = ArrayDeque<Pair<String, Int>>() // documentId to depth

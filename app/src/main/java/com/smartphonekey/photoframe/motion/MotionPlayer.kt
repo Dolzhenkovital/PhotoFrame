@@ -38,6 +38,7 @@ class MotionPlayer(
     private val mainHandler = Handler(Looper.getMainLooper())
     private var player: MediaPlayer? = null
     private var surface: Surface? = null
+    private var watchdog: Runnable? = null
 
     /** Invalidates async callbacks from a superseded playback. */
     private var playToken = 0
@@ -154,11 +155,13 @@ class MotionPlayer(
                 // Watchdog: a codec that never produces a frame (partially
                 // corrupt trailer) must not hold the player until the next
                 // slide — release it; the layer is still invisible anyway.
-                mainHandler.postDelayed({
+                val guard = Runnable {
                     if (token == playToken && textureView.alpha == 0f) {
                         releasePlayer()
                     }
-                }, RENDER_TIMEOUT_MS)
+                }
+                watchdog = guard
+                mainHandler.postDelayed(guard, RENDER_TIMEOUT_MS)
             } catch (e: Exception) {
                 stop() // still photo remains — exactly the intended fallback
             }
@@ -169,7 +172,12 @@ class MotionPlayer(
     fun stop() {
         playToken++
         pendingItem = null
-        mainHandler.removeCallbacksAndMessages(null) // pending starts, watchdog
+        // Only OUR watchdog is removed. A queued descriptor-open completion
+        // must stay: its token guard makes it a no-op AND it closes the
+        // ParcelFileDescriptor — sweeping the whole handler queue would
+        // leak that descriptor.
+        watchdog?.let(mainHandler::removeCallbacks)
+        watchdog = null
         textureView.animate().cancel()
         textureView.alpha = 0f
         releasePlayer()
