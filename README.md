@@ -51,8 +51,8 @@ OAuth-клієнтом):
 
 | Збірка | Що потрібно |
 |--------|-------------|
-| Debug з вашої Android Studio | нічого — SHA-1 вашого `~/.android/debug.keystore` вже в клієнті |
-| Debug-APK з CI-артефакту | секрет `DEBUG_KEYSTORE_BASE64` (base64 вашого `debug.keystore`) — інакше раннер підписує випадковим ключем |
+| Debug з Android Studio | працює лише з машини, чий `~/.android/debug.keystore` має зареєстрований SHA-1 (кожна машина генерує власний debug-ключ; іншим — імпортувати той самий keystore або додати свій SHA-1 у клієнт) |
+| Debug-APK з CI-артефакту | секрет `DEBUG_KEYSTORE_BASE64` (base64 того ж `debug.keystore`); застосовується **лише** до збірок з `main` — PR-збірки навмисно підписуються випадковим ключем |
 | Release-APK | додайте SHA-1 release-ключа (`keytool -list -v -keystore release.jks`) окремим Android-клієнтом у тому ж Cloud-проєкті |
 
 Поки consent screen у режимі **Testing**, входити можуть лише акаунти зі
