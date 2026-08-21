@@ -109,6 +109,12 @@ class MotionPhotoDetectorTest {
     }
 
     @Test
+    fun `buffer shorter than the marker is simply not a motion photo`() {
+        assertNull(MotionPhotoDetector.detect(byteArrayOf(1, 2, 3), 3, 10_000))
+        assertNull(MotionPhotoDetector.detect(ByteArray(0), 0, 10_000))
+    }
+
+    @Test
     fun `oversized headLength is clamped, not thrown`() {
         val bytes = head("""GCamera:MicroVideo="1" GCamera:MicroVideoOffset="4000"""")
         val result = MotionPhotoDetector.detect(bytes, bytes.size + 500, 10_000)!!

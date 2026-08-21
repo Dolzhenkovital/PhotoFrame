@@ -110,6 +110,9 @@ object MotionPhotoDetector {
 
     /** Naive byte search for "GCamera:" — 8-byte needle, effectively O(n). */
     private fun containsMarker(head: ByteArray, headLength: Int): Boolean {
+        // (An empty 0..negative range already iterates zero times; the
+        // explicit guard just makes the short-buffer case self-evident.)
+        if (headLength < MARKER.size) return false
         val limit = headLength - MARKER.size
         outer@ for (i in 0..limit) {
             for (j in MARKER.indices) {

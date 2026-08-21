@@ -87,6 +87,13 @@ class MainActivity : AppCompatActivity(), SlideshowController.Listener {
         super.onPause()
     }
 
+    override fun onDestroy() {
+        // onPause already stopped everything; this is belt-and-braces for
+        // teardown paths that skip a visible pause (e.g. finish from tests).
+        controller.stop()
+        super.onDestroy()
+    }
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) hideSystemUi()
