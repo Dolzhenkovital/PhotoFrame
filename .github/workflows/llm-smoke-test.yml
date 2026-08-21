@@ -63,7 +63,7 @@ jobs:
           probe "tiny request (~100 B)" tiny.json
 
           # 2b. Alternative models — is the whole service down, or one family?
-          for alt in gpt-5.6-sol gpt-5.6-luna gpt-5.6-luna-medium gpt-5.6-terra gpt-5.5-medium; do
+          for alt in gpt-5.6-terra-high gpt-5.6-terra gpt-5.6-terra-low gpt-5.6-sol-high gpt-5.6-sol; do
             python3 - "$alt" <<'PY' > alt.json
           import json, sys
           json.dump({
