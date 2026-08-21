@@ -189,6 +189,7 @@ class GPhotosSyncManager(
     private fun downloadAll(gen: Int, token: String, sessionId: String, maxDimension: Int) {
         try {
             val picked = api.listAllMediaItems(token, sessionId)
+                .distinctBy { it.id } // a repeated API page must not download twice
                 .filter { !it.isVideo } // photos only in this phase
             val fresh = picked.filter { !cache.contains(it) }
             post { if (gen == generation) setState(State.Downloading(0, fresh.size)) }

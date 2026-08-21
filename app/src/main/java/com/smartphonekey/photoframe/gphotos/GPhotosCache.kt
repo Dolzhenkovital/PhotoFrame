@@ -24,11 +24,27 @@ class GPhotosCache(context: Context) : PhotoStore {
     private val pendingShown = HashMap<String, Long>() // file_name → timestamp
 
     override val mediaDir: File by lazy {
+        // External storage is preferred (frames often have their space on an
+        // SD card), but only when the volume is actually MOUNTED and the
+        // directory can really be created — a non-null getExternalFilesDir()
+        // alone proves neither. Anything else falls back to internal so
+        // downloads have a working destination instead of failing forever.
         val external = appContext.getExternalFilesDir("gphotos")
-        val base = external ?: File(appContext.filesDir, "gphotos")
-        onExternalStorage = external != null
-        val dir = File(base, "media")
-        dir.mkdirs()
+        var dir: File? = null
+        if (external != null &&
+            Environment.getExternalStorageState(external) == Environment.MEDIA_MOUNTED
+        ) {
+            val candidate = File(external, "media")
+            if (candidate.mkdirs() || candidate.isDirectory) {
+                dir = candidate
+                onExternalStorage = true
+            }
+        }
+        if (dir == null) {
+            dir = File(File(appContext.filesDir, "gphotos"), "media")
+            dir.mkdirs()
+            onExternalStorage = false
+        }
         // Cached so noteShown() can check ownership on the main thread
         // without touching the filesystem.
         mediaDirPath = dir.absolutePath

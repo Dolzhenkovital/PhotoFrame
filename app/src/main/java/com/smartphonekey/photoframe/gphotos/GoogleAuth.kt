@@ -28,13 +28,16 @@ class GoogleAuth(
 ) {
 
     // Play services callbacks can land after the Activity is gone (rotation,
-    // back-out). Delivering them would touch destroyed views and keep the
-    // Activity alive, so they are dropped once the lifecycle is DESTROYED.
+    // back-out) or mid-teardown. Delivering them would touch dead views and
+    // keep the Activity alive, so they are dropped once it is finishing or
+    // destroyed. Callers that show UI must additionally gate on RESUMED.
     private val onToken: (String) -> Unit = { token -> ifAlive { onToken(token) } }
     private val onError: (String?) -> Unit = { detail -> ifAlive { onError(detail) } }
 
     private fun ifAlive(block: () -> Unit) {
-        if (activity.lifecycle.currentState != Lifecycle.State.DESTROYED) block()
+        val alive = !activity.isFinishing &&
+            activity.lifecycle.currentState != Lifecycle.State.DESTROYED
+        if (alive) block()
     }
 
     private val consentLauncher = activity.registerForActivityResult(

@@ -14,6 +14,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.Lifecycle
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.PreferenceManager
@@ -50,8 +51,14 @@ class SettingsActivity : AppCompatActivity() {
         googleAuth = GoogleAuth(
             activity = this,
             onToken = { token ->
+                // The sync itself is app-scoped — always safe to start. The
+                // dialog needs a live foreground window: showing it on a
+                // stopped/finishing Activity throws BadTokenException. When
+                // skipped here, onResume() catches up via isActive.
                 app.gphotosSync.begin(token, targetDimension())
-                showSyncDialog()
+                if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                    showSyncDialog()
+                }
             },
             onError = { message ->
                 // null = the user backed out of consent — stay silent.
@@ -67,14 +74,15 @@ class SettingsActivity : AppCompatActivity() {
                 .replace(R.id.settings_container, SettingsFragment())
                 .commit()
         }
-        // Sync may still be running from a previous visit — reattach.
-        if (app.gphotosSync.isActive) showSyncDialog()
     }
 
     override fun onResume() {
         super.onResume()
         PreferenceManager.getDefaultSharedPreferences(this)
             .registerOnSharedPreferenceChangeListener(cacheSizeListener)
+        // Sync may still be running from a previous visit, or the auth
+        // callback may have landed while we were not resumed — reattach.
+        if (app.gphotosSync.isActive) showSyncDialog()
     }
 
     override fun onPause() {
