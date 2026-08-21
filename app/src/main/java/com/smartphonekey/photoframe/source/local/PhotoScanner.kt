@@ -54,7 +54,8 @@ class PhotoScanner(private val resolver: ContentResolver) {
                         val cached = known[uri]
                         val item =
                             if (cached != null && cached.sizeBytes == size &&
-                                cached.lastModified == mtime && cached.width > 0
+                                cached.lastModified == mtime && cached.width > 0 &&
+                                cached.videoOffsetBytes != PhotoItem.MOTION_NOT_SCANNED
                             ) {
                                 cached
                             } else {
@@ -68,23 +69,29 @@ class PhotoScanner(private val resolver: ContentResolver) {
         return out
     }
 
+    // One buffer for the whole scan (the scanner runs on a single IO
+    // thread): a fresh 256 KB allocation per file would be real GC churn on
+    // a 1 GB frame with a 10k-photo card.
+    private val headBuffer = ByteArray(MotionPhotoDetector.HEAD_BYTES)
+
     /** One stream open: head buffer → bounds + EXIF + motion markers. */
     private fun inspect(uri: String, name: String, size: Long, mtime: Long): PhotoItem {
         var width = 0
         var height = 0
         var motion: MotionPhotoDetector.Result? = null
         try {
-            val head = readHead(uri)
-            if (head != null) {
+            val headLength = readHead(uri)
+            if (headLength > 0) {
                 val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeByteArray(head, 0, head.size, options)
+                BitmapFactory.decodeByteArray(headBuffer, 0, headLength, options)
                 if (options.outWidth > 0 && options.outHeight > 0) {
                     width = options.outWidth
                     height = options.outHeight
                 }
                 if (width > 0) {
                     val rotation = try {
-                        ExifInterface(ByteArrayInputStream(head)).rotationDegrees
+                        ExifInterface(ByteArrayInputStream(headBuffer, 0, headLength))
+                            .rotationDegrees
                     } catch (e: Exception) {
                         0 // truncated/absent EXIF in the head → no rotation
                     }
@@ -94,7 +101,7 @@ class PhotoScanner(private val resolver: ContentResolver) {
                         height = t
                     }
                 }
-                motion = MotionPhotoDetector.detect(head, size)
+                motion = MotionPhotoDetector.detect(headBuffer, headLength, size)
             }
             if (width <= 0) {
                 // Rare: dimensions live past the head (huge embedded
@@ -123,17 +130,17 @@ class PhotoScanner(private val resolver: ContentResolver) {
         )
     }
 
-    private fun readHead(uri: String): ByteArray? =
+    /** Fills [headBuffer]; returns the byte count read (0 when unreadable). */
+    private fun readHead(uri: String): Int =
         resolver.openInputStream(Uri.parse(uri))?.use { stream ->
-            val buffer = ByteArray(MotionPhotoDetector.HEAD_BYTES)
             var filled = 0
-            while (filled < buffer.size) {
-                val read = stream.read(buffer, filled, buffer.size - filled)
+            while (filled < headBuffer.size) {
+                val read = stream.read(headBuffer, filled, headBuffer.size - filled)
                 if (read < 0) break
                 filled += read
             }
-            if (filled == buffer.size) buffer else buffer.copyOf(filled)
-        }
+            filled
+        } ?: 0
 
     private fun imageMimes(): Set<String> =
         if (Build.VERSION.SDK_INT >= 28) MIMES_WITH_HEIF else MIMES_BASE

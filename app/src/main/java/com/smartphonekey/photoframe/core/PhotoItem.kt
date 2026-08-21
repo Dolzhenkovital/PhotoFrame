@@ -24,4 +24,14 @@ data class PhotoItem(
 
     val hasMotion: Boolean
         get() = videoOffsetBytes >= 0 && videoLengthBytes > 0
+
+    companion object {
+        /**
+         * Sentinel for rows indexed before motion detection existed (schema
+         * v1 → v2 migration): "not inspected yet", as opposed to -1 = "was
+         * inspected, no video". The scanner re-inspects such rows once even
+         * when size/mtime are unchanged; hasMotion treats both as no-video.
+         */
+        const val MOTION_NOT_SCANNED = -2L
+    }
 }

@@ -63,10 +63,10 @@ Google вимагає власний OAuth-клієнт для кожного з
 | Release | тег `v*` | тести → підписаний release-APK → GitHub Release |
 | LLM Smoke Test | вручну (Actions) | діагностика LLM-ендпоінта |
 
-Для підписаного релізу додайте секрети `RELEASE_KEYSTORE_BASE64` (base64
-файлу .jks), `RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_ALIAS`,
-`RELEASE_KEY_PASSWORD`. Без них реліз збереться непідписаним (з
-попередженням у лозі).
+Для релізу обов'язкові секрети `RELEASE_KEYSTORE_BASE64` (base64 файлу
+.jks), `RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_ALIAS`,
+`RELEASE_KEY_PASSWORD` — без них Release-workflow навмисно падає:
+непідписаний APK не встановлюється, публікувати його немає сенсу.
 
 Для LLM-функцій потрібен секрет **`OPENAI_API_KEY`** (Settings → Secrets and
 variables → Actions). Ендпоінт і модель за замовчуванням:

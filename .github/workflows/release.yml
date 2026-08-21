@@ -3,9 +3,10 @@ name: Release
 # Tag vX.Y.Z → tested, signed release APK attached to a GitHub Release.
 # Sideloading is the primary distribution for photo frames (ci-cd skill).
 #
-# Required secrets for a SIGNED build (otherwise an unsigned APK is produced
-# with a warning): RELEASE_KEYSTORE_BASE64 (base64 of the .jks),
-# RELEASE_KEYSTORE_PASSWORD, RELEASE_KEY_ALIAS, RELEASE_KEY_PASSWORD.
+# Required secrets — the job FAILS without them (an unsigned APK cannot be
+# installed, so publishing one would be a broken release):
+# RELEASE_KEYSTORE_BASE64 (base64 of the .jks), RELEASE_KEYSTORE_PASSWORD,
+# RELEASE_KEY_ALIAS, RELEASE_KEY_PASSWORD.
 
 on:
   push:
@@ -41,14 +42,25 @@ jobs:
         id: keystore
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
-          if [ -n "$RELEASE_KEYSTORE_BASE64" ]; then
-            printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
-            echo "path=$RUNNER_TEMP/release.jks" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::RELEASE_KEYSTORE_BASE64 is not set — the APK will be UNSIGNED."
-            echo "path=" >> "$GITHUB_OUTPUT"
+          missing=""
+          [ -z "$RELEASE_KEYSTORE_BASE64" ] && missing="$missing RELEASE_KEYSTORE_BASE64"
+          [ -z "$RELEASE_KEYSTORE_PASSWORD" ] && missing="$missing RELEASE_KEYSTORE_PASSWORD"
+          [ -z "$RELEASE_KEY_ALIAS" ] && missing="$missing RELEASE_KEY_ALIAS"
+          [ -z "$RELEASE_KEY_PASSWORD" ] && missing="$missing RELEASE_KEY_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::error::Refusing to publish an UNSIGNED release. Missing secrets:$missing"
+            exit 1
           fi
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          if [ ! -s "$RUNNER_TEMP/release.jks" ]; then
+            echo "::error::RELEASE_KEYSTORE_BASE64 did not decode to a non-empty keystore"
+            exit 1
+          fi
+          echo "path=$RUNNER_TEMP/release.jks" >> "$GITHUB_OUTPUT"
 
       - name: Build release APK
         env:

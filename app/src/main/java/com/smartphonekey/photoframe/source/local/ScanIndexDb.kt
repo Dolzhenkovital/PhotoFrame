@@ -32,9 +32,11 @@ class ScanIndexDb(context: Context) :
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) {
             // Additive change: keep the existing index (a wipe would blank
-            // the frame until a manual rescan). Motion columns default to
-            // "no video"; the next rescan fills them in.
-            db.execSQL("ALTER TABLE photos ADD COLUMN video_offset INTEGER NOT NULL DEFAULT -1")
+            // the frame until a manual rescan). Migrated rows get the
+            // NOT_SCANNED sentinel (-2), which forces the scanner to
+            // re-inspect them once — the usual size/mtime reuse would
+            // otherwise keep "no video" forever for pre-migration photos.
+            db.execSQL("ALTER TABLE photos ADD COLUMN video_offset INTEGER NOT NULL DEFAULT -2")
             db.execSQL("ALTER TABLE photos ADD COLUMN video_length INTEGER NOT NULL DEFAULT 0")
         }
     }
