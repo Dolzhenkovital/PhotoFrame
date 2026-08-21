@@ -104,6 +104,22 @@ Implementation map (as built in Phase 2): `gphotos/PickerApi` (REST),
 JVM-tested), `GPhotosSyncManager` (state machine, app-scoped),
 `GoogleAuth` (Identity SDK), `QrCode` (ZXing). UI in `SettingsActivity`.
 
+## Treat API responses as untrusted input
+
+Everything the Picker API returns crosses a network boundary, so validate it
+before it reaches Android APIs or the cache:
+
+- **Never hand `pickerUri` straight to `ACTION_VIEW`.** Require `https` and a
+  Google host; an arbitrary URI would let a tampered response launch any
+  `intent:`/deep link the device can resolve.
+- **Never index a downloaded file without a successful bounds decode.** An
+  HTML or JSON error body served with a 2xx status would otherwise enter the
+  cache as a "photo" and break the slideshow on every cycle. Delete it
+  instead — unlike the local source, we control this download and can retry.
+- Require the fields the flow actually depends on (`id`, `pickerUri`) rather
+  than defaulting them to empty strings: a blank id polls a session that does
+  not exist, forever.
+
 ## Cache
 
 The disk cache design (LRU, 1 GB default, settings-controlled cap, index

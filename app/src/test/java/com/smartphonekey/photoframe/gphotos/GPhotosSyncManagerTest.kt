@@ -70,7 +70,7 @@ class GPhotosSyncManagerTest {
         }
     }
 
-    private class FakeStore(private val dir: File) : PhotoStore {
+    private open class FakeStore(private val dir: File) : PhotoStore {
         val committed = ArrayList<String>()
         var evictedWithCap: Long? = null
         var capTooSmall = false
@@ -233,6 +233,29 @@ class GPhotosSyncManagerTest {
         var replayed: State? = null
         sync.attach { replayed = it }
         assertTrue(replayed is State.WaitingForPick)
+    }
+
+    @Test
+    fun `items rejected by the cache are not counted as added`() {
+        val poster = TestPoster()
+        val api = FakeApi(items = listOf(photo("good"), photo("corrupt")))
+        // Mimics a non-image body served with 2xx: commit() refuses it.
+        val store = object : FakeStore(tempDir()) {
+            override fun commit(item: PickedItem, tmp: File, now: Long): Boolean {
+                if (item.id == "corrupt") {
+                    tmp.delete()
+                    return false
+                }
+                return super.commit(item, tmp, now)
+            }
+        }
+        val sync = manager(api, store, poster)
+
+        sync.begin("token", 1280)
+        poster.runPending()
+
+        assertEquals(1, (sync.state as State.Finished).added)
+        assertEquals(listOf("good"), store.committed)
     }
 
     @Test

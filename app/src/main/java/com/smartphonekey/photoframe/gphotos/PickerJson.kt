@@ -1,5 +1,6 @@
 package com.smartphonekey.photoframe.gphotos
 
+import org.json.JSONException
 import org.json.JSONObject
 
 /**
@@ -24,8 +25,12 @@ object PickerJson {
     fun parseSession(body: String): PickerSession {
         val json = JSONObject(body)
         val polling = json.optJSONObject("pollingConfig")
+        val id = json.optString("id")
+        // Everything downstream keys off the session id; an empty one would
+        // silently produce a sync that polls a nonexistent session.
+        if (id.isBlank()) throw JSONException("session id is missing")
         return PickerSession(
-            id = json.getString("id"),
+            id = id,
             pickerUri = json.optString("pickerUri", ""),
             pollIntervalMs = parseDurationMs(
                 polling?.optString("pollInterval"), DEFAULT_POLL_INTERVAL_MS

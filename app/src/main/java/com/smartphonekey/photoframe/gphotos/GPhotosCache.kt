@@ -25,8 +25,16 @@ class GPhotosCache(context: Context) : PhotoStore {
     override val mediaDir: File by lazy {
         val base = appContext.getExternalFilesDir("gphotos")
             ?: File(appContext.filesDir, "gphotos")
-        File(base, "media").apply { mkdirs() }
+        val dir = File(base, "media")
+        dir.mkdirs()
+        // Cached so noteShown() can check ownership on the main thread
+        // without touching the filesystem.
+        mediaDirPath = dir.absolutePath
+        dir
     }
+
+    @Volatile
+    private var mediaDirPath: String? = null
 
     /** Startup sweep: drop *.tmp and heal file↔row mismatches. Call on IO thread. */
     fun sweep() {
@@ -59,6 +67,13 @@ class GPhotosCache(context: Context) : PhotoStore {
      * Moves a fully-downloaded tmp file into place and indexes it.
      * Dimensions are measured from the actual bytes — server-side resizing
      * bakes in EXIF rotation, so a bounds decode is the ground truth.
+     *
+     * A bounds decode that yields nothing means the bytes are not an image
+     * at all (an HTML/JSON error body served with a 2xx, or a truncated
+     * response). Such a file must never enter the index: the slideshow would
+     * queue it as displayable and then fail on it forever. Unlike the local
+     * source — where an unreadable file is still the user's own file worth
+     * attempting — here we control the download and can simply drop it.
      */
     override fun commit(item: PickedItem, tmp: File, now: Long): Boolean {
         val name = fileNameFor(item)
@@ -77,7 +92,11 @@ class GPhotosCache(context: Context) : PhotoStore {
                 height = options.outHeight
             }
         } catch (e: Exception) {
-            // Unknown dims → SQUARE bucket; still displayable.
+            // Leaves width/height at 0 — handled as "not an image" below.
+        }
+        if (width <= 0 || height <= 0) {
+            final.delete()
+            return false
         }
         return try {
             db.upsert(
@@ -120,9 +139,16 @@ class GPhotosCache(context: Context) : PhotoStore {
      * no DB write per slide on weak flash).
      */
     fun noteShown(uri: String, now: Long) {
-        if (!uri.contains("/gphotos/")) return
-        val name = uri.substringAfterLast('/')
-        synchronized(pendingShown) { pendingShown[name] = now }
+        // Only our own cache files carry LRU timestamps. Matching on the real
+        // parent directory (not a substring) keeps a local photo that merely
+        // lives in some "gphotos" folder from corrupting the index. If the
+        // cache dir has not been resolved yet, nothing from it can be on
+        // screen either, so skipping is correct.
+        val dirPath = mediaDirPath ?: return
+        val path = Uri.parse(uri).takeIf { it.scheme == "file" }?.path ?: return
+        val file = File(path)
+        if (file.parent != dirPath) return
+        synchronized(pendingShown) { pendingShown[file.name] = now }
     }
 
     /** Call from a background thread (onPause path or before eviction). */

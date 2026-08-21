@@ -43,6 +43,7 @@
     <string name="gp_cancel">Скасувати</string>
     <string name="gp_close">Закрити</string>
     <string name="gp_no_browser">На пристрої немає браузера — скористайтеся QR-кодом</string>
+    <string name="gp_bad_picker_uri">Google повернув неочікуване посилання — спробуйте ще раз</string>
     <string name="gp_qr_desc">QR-код для вибору фотографій</string>
     <string name="empty_no_photos_google">Додайте фото з Google Photos у налаштуваннях.</string>
 

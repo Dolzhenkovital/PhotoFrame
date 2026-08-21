@@ -1,5 +1,6 @@
 package com.smartphonekey.photoframe.gphotos
 
+import android.util.Log
 import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -17,8 +18,17 @@ class PickerApi(
 
     class ApiException(val code: Int, message: String) : IOException("HTTP $code: $message")
 
-    override fun createSession(token: String): PickerSession =
-        PickerJson.parseSession(request("POST", "$baseUrl/sessions", token, body = "{}"))
+    override fun createSession(token: String): PickerSession {
+        val session =
+            PickerJson.parseSession(request("POST", "$baseUrl/sessions", token, body = "{}"))
+        // Without a pickerUri there is nothing to show as a QR code and the
+        // user could never pick anything — fail loudly instead of leaving the
+        // sync waiting forever on a blank dialog.
+        if (session.pickerUri.isBlank()) {
+            throw IOException("Picker session has no pickerUri")
+        }
+        return session
+    }
 
     override fun getSession(token: String, sessionId: String): PickerSession =
         PickerJson.parseSession(request("GET", sessionUrl(sessionId), token))
@@ -42,7 +52,9 @@ class PickerApi(
         try {
             request("DELETE", sessionUrl(sessionId), token)
         } catch (e: IOException) {
-            // Best-effort cleanup; sessions expire on their own anyway.
+            // Best-effort cleanup; sessions expire on their own anyway. Still
+            // worth a log line: repeated failures here mean leaked sessions.
+            Log.w(TAG, "Failed to delete picker session: ${e.message}")
         }
     }
 
@@ -106,6 +118,7 @@ class PickerApi(
     }
 
     companion object {
+        private const val TAG = "PickerApi"
         private const val MAX_PAGES = 100 // 10k items — far beyond picker limits
 
         /**

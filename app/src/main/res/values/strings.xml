@@ -43,6 +43,7 @@
     <string name="gp_cancel">Cancel</string>
     <string name="gp_close">Close</string>
     <string name="gp_no_browser">No browser on this device — scan the QR code instead</string>
+    <string name="gp_bad_picker_uri">Google returned an unexpected link — try again</string>
     <string name="gp_qr_desc">QR code for picking photos</string>
     <string name="empty_no_photos_google">Add photos from Google Photos in Settings.</string>
 

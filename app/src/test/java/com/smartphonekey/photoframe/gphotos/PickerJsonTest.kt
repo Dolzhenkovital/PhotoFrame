@@ -48,6 +48,17 @@ class PickerJsonTest {
         assertTrue(session.mediaItemsSet)
     }
 
+    @Test(expected = org.json.JSONException::class)
+    fun `session without an id is rejected`() {
+        // A blank id would poll a nonexistent session forever.
+        PickerJson.parseSession("""{"pickerUri": "https://photos.google.com/x"}""")
+    }
+
+    @Test(expected = org.json.JSONException::class)
+    fun `session with an empty id is rejected`() {
+        PickerJson.parseSession("""{"id": "  ", "pickerUri": "https://x"}""")
+    }
+
     @Test
     fun `media items page parses items and token`() {
         val page = PickerJson.parseMediaItemsPage(
