@@ -1,5 +1,7 @@
 package com.smartphonekey.photoframe.gphotos
 
+import com.smartphonekey.photoframe.gphotos.GPhotosSyncManager.Poster
+import com.smartphonekey.photoframe.gphotos.GPhotosSyncManager.State
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.Executor
@@ -247,6 +249,3 @@ class GPhotosSyncManagerTest {
         assertEquals(10L, store.evictedWithCap)
     }
 }
-
-private typealias State = GPhotosSyncManager.State
-private typealias Poster = GPhotosSyncManager.Poster
