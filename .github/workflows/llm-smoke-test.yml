@@ -1,0 +1,80 @@
+name: LLM Smoke Test
+
+# Manual diagnostic for the LLM endpoint used by the review workflows.
+# Run it from the Actions tab when a review fails, to tell apart:
+#   "the service/key is broken" vs "our request is too big for the proxy".
+# Prints HTTP codes only — never the key, never the response body verbatim.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+      OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
+    steps:
+      - name: Probe endpoint
+        run: |
+          base="${OPENAI_BASE_URL:-https://3xanny-secureapi.hf.space/v1}"
+          model="${OPENAI_MODEL:-gpt-5.6-sol-medium}"
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::error::OPENAI_API_KEY secret is not set"
+            exit 1
+          fi
+          echo "Base URL: $base"
+          echo "Model:    $model"
+          echo
+
+          probe() {
+            local label="$1" payload_file="$2"
+            local code
+            code=$(curl -s -o resp.json -w '%{http_code}' --max-time 300 \
+              -X POST "$base/chat/completions" \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $OPENAI_API_KEY" \
+              --data-binary "@$payload_file" || echo "000")
+            echo "== $label -> HTTP $code"
+            if [ "$code" = "200" ]; then
+              python3 -c "import json;d=json.load(open('resp.json'));c=d['choices'][0]['message']['content'];print('   reply:', (c or '')[:120])"
+            else
+              head -c 300 resp.json; echo
+            fi
+            echo
+          }
+
+          # 1. Models listing — is the gateway routing at all?
+          echo "== models list -> HTTP $(curl -s -o /dev/null -w '%{http_code}' --max-time 60 \
+            -H "Authorization: Bearer $OPENAI_API_KEY" "$base/models")"
+          echo
+
+          # 2. Tiny request — baseline sanity.
+          python3 - <<'PY' > tiny.json
+          import json, os
+          json.dump({
+            "model": os.environ.get("OPENAI_MODEL") or "gpt-5.6-sol-medium",
+            "messages": [{"role": "user", "content": "Reply with the single word: ok"}],
+            "max_completion_tokens": 2000,
+          }, open("/dev/stdout", "w"))
+          PY
+          probe "tiny request (~100 B)" tiny.json
+
+          # 3. Large request — does a review-sized payload get rejected?
+          python3 - <<'PY' > large.json
+          import json, os
+          filler = "def function_%d(): return %d\n"
+          body = "".join(filler % (i, i) for i in range(4000))  # ~120 KB
+          json.dump({
+            "model": os.environ.get("OPENAI_MODEL") or "gpt-5.6-sol-medium",
+            "messages": [{
+              "role": "user",
+              "content": "Summarize this code in one sentence:\n" + body,
+            }],
+            "max_completion_tokens": 2000,
+          }, open("/dev/stdout", "w"))
+          PY
+          echo "large payload size: $(wc -c < large.json) bytes"
+          probe "large request (review-sized)" large.json
