@@ -64,7 +64,7 @@ class MainActivity : AppCompatActivity(), SlideshowController.Listener {
     override fun onResume() {
         super.onResume()
         hideSystemUi()
-        app.gphotosSync.attach(syncListener, replay = false)
+        app.gphotosSync.attachTransitionsOnly(syncListener)
         reloadAndStart()
     }
 

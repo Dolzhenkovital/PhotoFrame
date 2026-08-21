@@ -90,14 +90,21 @@ class GPhotosSyncManager(
             state is State.Downloading
 
     /**
-     * Starts observing. With [replay] the listener immediately receives the
-     * current state — what a re-opened progress dialog needs; an observer
-     * that only reacts to *transitions* (the slideshow reloading on
-     * Finished) passes false so a stale terminal state isn't re-delivered.
+     * Starts observing and immediately replays the current state — what a
+     * re-opened progress dialog needs to render itself.
      */
-    fun attach(listener: Listener, replay: Boolean = true) {
+    fun attach(listener: Listener) {
         listeners.addIfAbsent(listener)
-        if (replay) listener.onState(state)
+        listener.onState(state)
+    }
+
+    /**
+     * Starts observing without the replay, for observers that react only to
+     * *transitions* — e.g. the slideshow reloading on Finished must not
+     * re-fire for a stale terminal state it already handled.
+     */
+    fun attachTransitionsOnly(listener: Listener) {
+        listeners.addIfAbsent(listener)
     }
 
     /** Removes exactly [listener]; other observers are untouched. */

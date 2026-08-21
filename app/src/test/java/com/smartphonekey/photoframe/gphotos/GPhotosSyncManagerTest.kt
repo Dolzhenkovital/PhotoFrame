@@ -284,7 +284,7 @@ class GPhotosSyncManagerTest {
         // The slideshow attaches after the fact and must NOT react to the
         // stale current state — only to transitions from now on.
         val seen = ArrayList<State>()
-        sync.attach({ seen.add(it) }, replay = false)
+        sync.attachTransitionsOnly { seen.add(it) }
         assertTrue(seen.isEmpty())
         poster.runPending()
         assertTrue(seen.any { it is State.Finished })

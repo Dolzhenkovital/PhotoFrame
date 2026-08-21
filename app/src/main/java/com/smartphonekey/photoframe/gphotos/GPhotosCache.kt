@@ -6,6 +6,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Environment
 import com.smartphonekey.photoframe.core.PhotoItem
 import java.io.File
 import java.security.MessageDigest
@@ -23,8 +24,9 @@ class GPhotosCache(context: Context) : PhotoStore {
     private val pendingShown = HashMap<String, Long>() // file_name → timestamp
 
     override val mediaDir: File by lazy {
-        val base = appContext.getExternalFilesDir("gphotos")
-            ?: File(appContext.filesDir, "gphotos")
+        val external = appContext.getExternalFilesDir("gphotos")
+        val base = external ?: File(appContext.filesDir, "gphotos")
+        onExternalStorage = external != null
         val dir = File(base, "media")
         dir.mkdirs()
         // Cached so noteShown() can check ownership on the main thread
@@ -36,9 +38,29 @@ class GPhotosCache(context: Context) : PhotoStore {
     @Volatile
     private var mediaDirPath: String? = null
 
+    @Volatile
+    private var onExternalStorage = false
+
+    /**
+     * External app-private storage is often an SD card on frames — and SD
+     * cards get ejected. While the volume is away, directory listings return
+     * null and File.exists() is false for every cached file; taking that at
+     * face value would wipe the index and orphan the entire cache. Any
+     * maintenance that deletes rows or files must be skipped until the
+     * volume is back.
+     */
+    private fun storageReady(): Boolean =
+        !onExternalStorage ||
+            Environment.getExternalStorageState(mediaDir) == Environment.MEDIA_MOUNTED
+
     /** Startup sweep: drop *.tmp and heal file↔row mismatches. Call on IO thread. */
     fun sweep() {
-        val files = mediaDir.listFiles()?.associateBy { it.name } ?: emptyMap()
+        if (!storageReady()) return
+        // A null listing means the directory is unreadable RIGHT NOW, not
+        // that it is empty — touching the index in that state would destroy
+        // a healthy cache.
+        val listing = mediaDir.listFiles() ?: return
+        val files = listing.associateBy { it.name }
         files.values.filter { it.name.endsWith(".tmp") }.forEach { it.delete() }
         val rows = db.listAll()
         val rowNames = rows.mapTo(HashSet()) { it.fileName }
@@ -165,6 +187,11 @@ class GPhotosCache(context: Context) : PhotoStore {
     /** Applies the LRU policy; returns true when the cap is too small. */
     override fun evictToCap(capBytes: Long): Boolean {
         flush()
+        // With the volume ejected, File.delete() fails and !exists() is
+        // trivially true for everything — the loop below would drop every
+        // index row while the bytes still exist on the card. Do nothing;
+        // the next eviction after remount converges.
+        if (!storageReady()) return false
         val entries = db.listAll().map {
             CacheEviction.Entry(it.fileName, it.sizeBytes, it.lastShownAt, it.downloadedAt)
         }
@@ -201,8 +228,12 @@ class GPhotosCache(context: Context) : PhotoStore {
 
     fun clearAll() {
         synchronized(pendingShown) { pendingShown.clear() }
-        mediaDir.listFiles()?.forEach { it.delete() }
-        db.clear()
+        // Files first, index second: if the volume is away the rows survive,
+        // and the post-remount sweep reconciles whatever remains.
+        if (storageReady()) {
+            mediaDir.listFiles()?.forEach { it.delete() }
+            db.clear()
+        }
     }
 
     private class Db(context: Context) :
