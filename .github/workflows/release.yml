@@ -95,6 +95,8 @@ jobs:
           RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          GP_OAUTH_CLIENT_ID: ${{ secrets.GP_OAUTH_CLIENT_ID }}
+          GP_OAUTH_CLIENT_SECRET: ${{ secrets.GP_OAUTH_CLIENT_SECRET }}
         run: |
           gradle assembleRelease
           apk=$(find app/build/outputs/apk/release -name '*.apk' | head -n1)

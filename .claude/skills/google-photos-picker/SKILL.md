@@ -34,26 +34,41 @@ Consequences to design around, not against:
 1. Cloud project → enable **Google Photos Picker API**.
 2. OAuth consent screen (External), scope
    `https://www.googleapis.com/auth/photospicker.mediaitems.readonly`.
-3. Two OAuth clients in the same project: **Android** (package
-   `com.smartphonekey.photoframe` + SHA-1) and **Web application** (its client
-   ID is passed to the Android authorization request as the "server client id").
+3. One OAuth client of type **Desktop app**; its client id + secret go into
+   the build via env vars / local.properties (see README). For installed
+   apps the secret is not confidential (RFC 8252 §8.5) — it is kept out of
+   the repo only so forks don't burn this project's quota.
 
-## Auth on Android (minSdk 23)
+While the consent screen is in **Testing**, refresh tokens die after 7
+days; **In production** is required for the sign-in-once product promise.
 
-Use Google Identity Services (`com.google.android.gms:play-services-auth`),
-`Identity.getAuthorizationClient(...)` with the picker scope, which yields a
-short-lived **access token** for REST calls. Notes:
+## Auth on Android (minSdk 23): loopback + PKCE, NOT the Identity SDK
 
-- Play services dropped support below API 23 — exactly our minSdk, so pin a
-  `play-services-auth` version whose minSdk is still 23 and verify with
-  `gradle :app:dependencies` before bumping.
-- Handle GMS absence (`GoogleApiAvailability`) with a clear error screen;
-  frames without Play services can still use local photos.
-- Access tokens expire (~1h). Re-authorize silently before a sync; the
-  authorization client returns a cached token without UI when possible.
+Real photo frames ship without Play services (the reference Allwinner frame
+has zero Google packages), so the GMS Identity SDK cannot be the auth path.
+Instead: system browser + loopback redirect (RFC 8252 §7.3) + PKCE against
+the Desktop client — works on anything with a browser, needs no APK
+signature registration (any debug/release build signs in), and returns a
+**refresh token**, so the frame signs in once and then silently refreshes
+~1h access tokens forever. Implemented in `gphotos/oauth/`:
 
-Verify current class names against the official docs at implementation time —
-this API surface has been renamed before (GoogleSignIn → Identity).
+- `Pkce` (verifier/S256 challenge/state), `AuthProtocol` (URLs, redirect
+  parsing, token bodies), `TokenJson` (response parsing) — pure Kotlin,
+  JVM-tested against RFC 7636's reference vector.
+- `LoopbackAuth` — app-scoped orchestrator: `ServerSocket` on 127.0.0.1
+  (port 0 = ephemeral; Desktop clients accept any loopback port), opens the
+  consent URL via `ACTION_VIEW`, ignores non-redirect requests (favicon
+  probes, state mismatches) until a 5-minute deadline, exchanges the code,
+  persists tokens in `TokenStore` (own prefs file).
+- Rules that must survive refactors: `prompt=consent` is forced whenever no
+  refresh token is stored (Google only guarantees one on a consenting
+  round); `invalid_grant` on refresh wipes the store and falls back to
+  interactive consent; a state mismatch is *ignored*, never fatal — killing
+  the flow on a mismatched request would let any local app DoS the sign-in.
+
+Do NOT "upgrade" this to embedded WebView (Google blocks it:
+`disallowed_useragent`), to the TV/device-code flow (the picker scope is not
+on its allowlist), or back to play-services-auth (dead on GMS-less frames).
 
 ## Picker session flow (REST, base `https://photospicker.googleapis.com/v1`)
 

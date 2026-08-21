@@ -25,9 +25,9 @@ import androidx.preference.PreferenceManager
 import com.smartphonekey.photoframe.PhotoFrameApp
 import com.smartphonekey.photoframe.R
 import com.smartphonekey.photoframe.gphotos.GPhotosSyncManager
-import com.smartphonekey.photoframe.gphotos.GoogleAuth
 import com.smartphonekey.photoframe.gphotos.PickerUris
 import com.smartphonekey.photoframe.gphotos.QrCode
+import com.smartphonekey.photoframe.gphotos.oauth.LoopbackAuth
 import com.smartphonekey.photoframe.source.local.MediaStoreScanner
 import com.smartphonekey.photoframe.source.local.PhotoScanner
 import kotlin.math.max
@@ -36,9 +36,39 @@ class SettingsActivity : AppCompatActivity() {
 
     private val app: PhotoFrameApp get() = application as PhotoFrameApp
 
-    private lateinit var googleAuth: GoogleAuth
     private var syncDialog: AlertDialog? = null
     private var syncListener: GPhotosSyncManager.Listener? = null
+
+    /**
+     * Auth callbacks are app-scoped (browser consent can outlive this
+     * screen), so the sync start must not depend on this Activity being
+     * alive — only the UI bits are gated on lifecycle state.
+     */
+    private val authListener = object : LoopbackAuth.Listener {
+        override fun onToken(accessToken: String) {
+            app.gphotosSync.begin(accessToken, targetDimension())
+            if (!isFinishing &&
+                lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+            ) {
+                showSyncDialog()
+            }
+        }
+
+        override fun onError(detail: String?, userCancelled: Boolean) {
+            // Silent when the user backed out of consent themselves.
+            if (userCancelled || detail == null) return
+            if (isFinishing ||
+                !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+            ) {
+                return
+            }
+            Toast.makeText(
+                this@SettingsActivity,
+                getString(R.string.gp_error_generic, detail),
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
 
     private val pickFolder =
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -67,27 +97,6 @@ class SettingsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
-        googleAuth = GoogleAuth(
-            activity = this,
-            onToken = { token ->
-                // The sync itself is app-scoped — always safe to start. The
-                // dialog needs a live foreground window: showing it on a
-                // stopped/finishing Activity throws BadTokenException. When
-                // skipped here, onResume() catches up via isActive.
-                app.gphotosSync.begin(token, targetDimension())
-                if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
-                    showSyncDialog()
-                }
-            },
-            onError = { message ->
-                // null = the user backed out of consent — stay silent.
-                if (message != null) {
-                    Toast.makeText(
-                        this, getString(R.string.gp_error_generic, message), Toast.LENGTH_LONG
-                    ).show()
-                }
-            },
-        )
         if (savedInstanceState == null) {
             supportFragmentManager.beginTransaction()
                 .replace(R.id.settings_container, SettingsFragment())
@@ -242,11 +251,16 @@ class SettingsActivity : AppCompatActivity() {
             showSyncDialog()
             return
         }
-        if (!GoogleAuth.isPlayServicesAvailable(this)) {
-            Toast.makeText(this, R.string.gp_error_no_gms, Toast.LENGTH_LONG).show()
+        if (!app.gphotosAuth.isConfigured) {
+            Toast.makeText(this, R.string.gp_error_not_configured, Toast.LENGTH_LONG).show()
             return
         }
-        googleAuth.requestAccess()
+        if (!app.gphotosAuth.isSignedIn) {
+            // First run goes through the browser — tell the user where to
+            // look before the screen visibly "does nothing".
+            Toast.makeText(this, R.string.gp_continue_in_browser, Toast.LENGTH_LONG).show()
+        }
+        app.gphotosAuth.requestAccessToken(interactive = true, listener = authListener)
     }
 
     fun clearGooglePhotosCache() {

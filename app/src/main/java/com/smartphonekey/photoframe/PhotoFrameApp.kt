@@ -7,6 +7,8 @@ import com.bumptech.glide.Glide
 import com.bumptech.glide.MemoryCategory
 import com.smartphonekey.photoframe.gphotos.GPhotosCache
 import com.smartphonekey.photoframe.gphotos.GPhotosSyncManager
+import com.smartphonekey.photoframe.gphotos.oauth.LoopbackAuth
+import com.smartphonekey.photoframe.gphotos.oauth.TokenStore
 import com.smartphonekey.photoframe.settings.Prefs
 import com.smartphonekey.photoframe.source.local.ScanIndexDb
 import java.util.concurrent.ExecutorService
@@ -29,6 +31,8 @@ class PhotoFrameApp : Application() {
         private set
     lateinit var gphotosSync: GPhotosSyncManager
         private set
+    lateinit var gphotosAuth: LoopbackAuth
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -50,6 +54,14 @@ class PhotoFrameApp : Application() {
             cache = gphotosCache,
             cacheCapBytes = { prefs.cacheSizeBytes },
             ioExecutor = ioExecutor,
+        )
+        // App-scoped: browser consent may outlive the Settings screen.
+        gphotosAuth = LoopbackAuth(
+            context = this,
+            store = TokenStore(this),
+            ioExecutor = ioExecutor,
+            clientId = BuildConfig.GP_OAUTH_CLIENT_ID,
+            clientSecret = BuildConfig.GP_OAUTH_CLIENT_SECRET,
         )
         // Heal any half-written cache files from a previous crash.
         ioExecutor.execute { gphotosCache.sweep() }
