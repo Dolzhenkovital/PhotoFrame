@@ -85,10 +85,17 @@ class MediaStoreScanner(private val resolver: ContentResolver) {
      */
     fun listBuckets(): List<Bucket> {
         val counts = HashMap<Long, Bucket>()
+        // Same MIME filter as scan(): counting rows the scanner would later
+        // skip both wastes the cursor walk and advertises buckets that
+        // would scan to zero photos.
+        val mimes = LocalScan.imageMimes(Build.VERSION.SDK_INT)
         val cursor = try {
             resolver.query(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                BUCKET_PROJECTION, null, null, null
+                BUCKET_PROJECTION,
+                "${MediaStore.Images.Media.MIME_TYPE} IN (${mimes.joinToString(",") { "?" }})",
+                mimes.toTypedArray(),
+                null
             )
         } catch (e: Exception) {
             null

@@ -100,11 +100,17 @@ class LoopbackAuth(
     // The pending interactive flow; guarded by `this`.
     private var pending: PendingFlow? = null
 
+    // Sign-out must also kill token work that is already past its network
+    // call — an in-flight exchange/refresh finishing after signOut() would
+    // write fresh tokens into the cleared store and restore access.
+    private val generation = AuthGeneration()
+
     private class PendingFlow(
         val server: ServerSocket,
         val verifier: String,
         val state: String,
         val authUrl: String,
+        val generation: Long,
     )
 
     /**
@@ -124,7 +130,8 @@ class LoopbackAuth(
         }
         val refresh = store.refreshToken
         if (refresh != null) {
-            ioExecutor.execute { refreshBlocking(refresh, interactive) }
+            val gen = generation.current()
+            ioExecutor.execute { refreshBlocking(refresh, interactive, gen) }
             return
         }
         if (interactive) {
@@ -134,14 +141,16 @@ class LoopbackAuth(
         }
     }
 
-    private fun refreshBlocking(refreshToken: String, interactive: Boolean) {
+    private fun refreshBlocking(refreshToken: String, interactive: Boolean, gen: Long) {
         try {
             val tokens = postTokenEndpoint(
                 AuthProtocol.refreshBody(clientId, clientSecret, refreshToken)
             )
+            if (!generation.isCurrent(gen)) return // signed out mid-refresh
             storeTokens(tokens)
             deliverToken(tokens.accessToken)
         } catch (e: Exception) {
+            if (!generation.isCurrent(gen)) return
             if (TokenJson.isInvalidGrant(e)) {
                 // The grant is dead (revoked, or expired for a Testing-mode
                 // consent screen) — only a fresh consent can help.
@@ -188,6 +197,7 @@ class LoopbackAuth(
                         // otherwise Google may skip issuing one.
                         forceConsent = store.refreshToken == null,
                     ),
+                    generation = generation.current(),
                 )
                 pending = flow
                 ioExecutor.execute { listenBlocking(flow) }
@@ -317,9 +327,14 @@ class LoopbackAuth(
                     port = flow.server.localPort,
                 )
             )
+            // The redirect already cleared `pending`, so cancel() cannot
+            // reach this exchange — the generation check is what makes
+            // signOut() win against an in-flight exchange.
+            if (!generation.isCurrent(flow.generation)) return
             storeTokens(tokens)
             deliverToken(tokens.accessToken)
         } catch (e: Exception) {
+            if (!generation.isCurrent(flow.generation)) return
             Log.w(TAG, "Code exchange failed: ${e.message}")
             deliverError(e.message, false)
         }
@@ -359,8 +374,13 @@ class LoopbackAuth(
         }
     }
 
-    /** Sign out: forget tokens. The user re-consents next time. */
+    /**
+     * Sign out: forget tokens AND kill any in-flight token operation — an
+     * exchange or refresh finishing after this call must not write tokens
+     * back into the cleared store.
+     */
     fun signOut() {
+        generation.invalidate()
         cancel()
         store.clear()
     }

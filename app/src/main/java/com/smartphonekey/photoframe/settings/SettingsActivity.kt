@@ -77,8 +77,8 @@ class SettingsActivity : AppCompatActivity() {
         }
 
     private val requestGalleryPermission =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
-            // Result flag alone is not the whole truth: on API 34+ a partial
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            // Result map alone is not the whole truth: on API 34+ a partial
             // grant reports "denied" for READ_MEDIA_IMAGES while the
             // selection permission IS granted — re-derive from checks.
             if (hasGalleryPermission()) {
@@ -156,17 +156,23 @@ class SettingsActivity : AppCompatActivity() {
         if (hasGalleryPermission()) {
             showBucketPicker()
         } else {
-            requestGalleryPermission.launch(galleryPermission())
+            requestGalleryPermission.launch(galleryPermissions())
         }
     }
 
-    /** The runtime permission the current API level wants (local-photos skill). */
-    private fun galleryPermission(): String =
-        if (Build.VERSION.SDK_INT >= 33) {
-            Manifest.permission.READ_MEDIA_IMAGES // modern phone path
-        } else {
-            Manifest.permission.READ_EXTERNAL_STORAGE // frame path (23–32)
-        }
+    /** The runtime permissions the current API level wants (local-photos skill). */
+    private fun galleryPermissions(): Array<String> = when {
+        // Requesting VISUAL_USER_SELECTED alongside lets the system offer
+        // "Select photos" natively instead of the compatibility behavior.
+        Build.VERSION.SDK_INT >= 34 -> arrayOf(
+            Manifest.permission.READ_MEDIA_IMAGES,
+            Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
+        )
+        Build.VERSION.SDK_INT >= 33 ->
+            arrayOf(Manifest.permission.READ_MEDIA_IMAGES) // modern phone path
+        else ->
+            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE) // frame path (23–32)
+    }
 
     private fun hasGalleryPermission(): Boolean {
         fun granted(permission: String) =
