@@ -347,7 +347,13 @@ class GPhotosSyncManager(
         /** Floor for the picking window — see the schedulePoll call site. */
         const val MIN_PICK_WINDOW_MS = 2 * 60 * 60_000L
 
-        /** HTTP answers that definitively mean "this session is gone". */
-        val DEAD_SESSION_HTTP_CODES = setOf(400, 403, 404, 410)
+        /**
+         * HTTP answers that definitively mean "this session is gone":
+         * 400 (malformed/unknown id), 404 (not found), 410 (expired).
+         * Deliberately NOT 401/403 — those can mean an expired token or a
+         * scope/policy hiccup, and destroying the stored session on an auth
+         * problem would orphan the user's in-progress pick.
+         */
+        val DEAD_SESSION_HTTP_CODES = setOf(400, 404, 410)
     }
 }

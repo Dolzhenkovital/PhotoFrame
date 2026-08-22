@@ -423,6 +423,44 @@ class GPhotosSyncManagerTest {
     }
 
     @Test
+    fun `403 on the stored session is treated as transient, not dead`() {
+        val api = object : PickerClient {
+            var createdSessions = 0
+            val deletedSessions = ArrayList<String>()
+            override fun createSession(token: String) = error("must not create")
+            override fun getSession(token: String, sessionId: String): PickerSession =
+                throw PickerApi.ApiException(403, "policy says no, today")
+            override fun listAllMediaItems(token: String, sessionId: String) =
+                emptyList<PickedItem>()
+            override fun deleteSession(token: String, sessionId: String) {
+                deletedSessions.add(sessionId)
+            }
+            override fun download(
+                token: String, item: PickedItem, maxDimension: Int, target: File,
+            ) = error("no downloads here")
+        }
+        val store = FakeStore(tempDir())
+        var storedSession: String? = "picky-sess"
+        val sync = GPhotosSyncManager(
+            cache = store,
+            cacheCapBytes = { 1_000L },
+            ioExecutor = DirectExecutor(),
+            api = api,
+            poster = TestPoster(),
+            clock = { 1_000L },
+            storeSession = { storedSession = it },
+            loadStoredSession = { storedSession },
+        )
+
+        sync.begin("token", 1280)
+
+        // 403 may be a token/scope/policy problem — the pick must survive.
+        assertTrue(sync.state is State.Failed)
+        assertEquals(emptyList<String>(), api.deletedSessions)
+        assertEquals("picky-sess", storedSession)
+    }
+
+    @Test
     fun `auth failure mid-poll keeps the session for a re-authorized retry`() {
         val poster = TestPoster()
         val api = FakeApi(itemsReady = false)
