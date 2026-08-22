@@ -51,8 +51,10 @@ class GPhotosSyncManagerTest {
         var failOnCreate: Boolean = false,
         var onDownload: (PickedItem) -> Unit = {},
         var downloadSizeBytes: Int = 5,
-        /** Session ids for which getSession/deleteSession throw (expired). */
+        /** Session ids for which getSession/deleteSession throw 404 (dead). */
         var deadSessionIds: Set<String> = emptySet(),
+        /** Session ids for which getSession throws a plain (transient) IO error. */
+        var transientFailureIds: Set<String> = emptySet(),
     ) : PickerClient {
         val deletedSessions = ArrayList<String>()
         var createdSessions = 0
@@ -64,7 +66,10 @@ class GPhotosSyncManagerTest {
         }
 
         override fun getSession(token: String, sessionId: String): PickerSession {
-            if (sessionId in deadSessionIds) throw IOException("session gone")
+            if (sessionId in deadSessionIds) {
+                throw PickerApi.ApiException(404, "session gone")
+            }
+            if (sessionId in transientFailureIds) throw IOException("network down")
             return PickerSession(sessionId, "https://pick/me", 10, 1_000, itemsReady)
         }
 
@@ -393,6 +398,28 @@ class GPhotosSyncManagerTest {
         assertEquals(1, api.createdSessions)
         assertEquals(listOf("dead-sess"), api.deletedSessions)
         assertEquals("sess-1", storedSession)
+    }
+
+    @Test
+    fun `transient getSession failure keeps the stored session for retry`() {
+        val poster = TestPoster()
+        val api = FakeApi(transientFailureIds = setOf("mid-pick-sess"))
+        val store = FakeStore(tempDir())
+        var storedSession: String? = "mid-pick-sess"
+        val sync = manager(
+            api, store, poster,
+            storeSession = { storedSession = it },
+            loadStoredSession = { storedSession },
+        )
+
+        sync.begin("token", 1280)
+
+        // A Wi-Fi blip while the user is an hour into picking must NOT
+        // replace their session: fail, keep the id, let them retry.
+        assertTrue(sync.state is State.Failed)
+        assertEquals(0, api.createdSessions)
+        assertEquals(emptyList<String>(), api.deletedSessions)
+        assertEquals("mid-pick-sess", storedSession)
     }
 
     @Test

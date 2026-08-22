@@ -139,17 +139,19 @@ class GPhotosSyncManager(
                 val session = if (stored != null) {
                     try {
                         api.getSession(token, stored)
-                    } catch (e: Exception) {
-                        // The stored id is known-dead: forget it NOW, before
-                        // the replacement attempt — if createSession() below
-                        // also fails, a retry must not chew on the same
-                        // expired id again.
+                    } catch (e: PickerApi.ApiException) {
+                        // Replace the stored session ONLY on a definitive
+                        // "this session is gone" answer. A transient error
+                        // (network, 5xx, 429) must keep it: the user may be
+                        // an hour into hand-picking an album, and replacing
+                        // the session on a Wi-Fi blip would orphan that pick.
+                        if (e.code !in DEAD_SESSION_HTTP_CODES) throw e
+                        // Known-dead: forget it NOW, before the replacement
+                        // attempt — if createSession() below also fails, a
+                        // retry must not chew on the same expired id again.
                         storeSession(null)
-                        // Best-effort cleanup of the unusable stored session
-                        // before replacing it — otherwise abandoned Picker
-                        // sessions pile up server-side until they expire.
-                        // Truly best-effort: a DELETE failing on an
-                        // already-dead id must not fail the whole sync.
+                        // Best-effort server-side cleanup; a DELETE failing
+                        // on an already-dead id must not fail the sync.
                         try {
                             api.deleteSession(token, stored)
                         } catch (cleanup: Exception) {
@@ -157,6 +159,9 @@ class GPhotosSyncManager(
                         }
                         api.createSession(token)
                     }
+                    // Anything else (plain IOException etc.) propagates to
+                    // failWith with sessionId = null: state goes Failed, the
+                    // stored id survives for the user's retry.
                 } else {
                     api.createSession(token)
                 }
@@ -339,5 +344,8 @@ class GPhotosSyncManager(
 
         /** Floor for the picking window — see the schedulePoll call site. */
         const val MIN_PICK_WINDOW_MS = 2 * 60 * 60_000L
+
+        /** HTTP answers that definitively mean "this session is gone". */
+        val DEAD_SESSION_HTTP_CODES = setOf(400, 403, 404, 410)
     }
 }

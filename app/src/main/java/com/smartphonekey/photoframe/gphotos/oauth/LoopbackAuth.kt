@@ -177,8 +177,11 @@ class LoopbackAuth(
             if (!generation.isCurrent(gen)) return
             if (TokenJson.isInvalidGrant(e)) {
                 // The grant is dead (revoked, or expired for a Testing-mode
-                // consent screen) — only a fresh consent can help.
-                store.clear()
+                // consent screen) — only a fresh consent can help. The clear
+                // is serialized with token writes like every store mutation.
+                synchronized(tokenWriteLock) {
+                    if (generation.isCurrent(gen)) store.clear()
+                }
                 if (interactive) {
                     main.post { beginAuthorization() }
                     return

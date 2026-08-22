@@ -107,13 +107,17 @@ class MediaStoreScanner(private val resolver: ContentResolver) {
     /** One row of [listBuckets]: a device folder as MediaStore sees it. */
     data class Bucket(val id: Long, val name: String, val count: Int)
 
+    /** Same completeness contract as [ScanResult], for the folder list. */
+    data class BucketsResult(val buckets: List<Bucket>, val complete: Boolean)
+
     /**
      * Folders that contain photos, most populous first — the folder list for
      * the fallback picker dialog. Grouping happens in Kotlin rather than SQL:
      * GROUP BY in a ContentResolver selection is a non-SDK trick that broke
      * in API 30 (android-compat skill: no non-SDK APIs).
      */
-    fun listBuckets(): List<Bucket> {
+    fun listBuckets(): BucketsResult {
+        var complete = true
         val counts = HashMap<Long, Bucket>()
         // Same MIME filter as scan(): counting rows the scanner would later
         // skip both wastes the cursor walk and advertises buckets that
@@ -130,6 +134,7 @@ class MediaStoreScanner(private val resolver: ContentResolver) {
         } catch (e: SecurityException) {
             throw e // revoked permission must surface as such, not "no folders"
         } catch (e: Exception) {
+            complete = false
             null
         }
         try {
@@ -145,9 +150,11 @@ class MediaStoreScanner(private val resolver: ContentResolver) {
         } catch (e: SecurityException) {
             throw e
         } catch (e: Exception) {
-            // A partial folder list beats crashing the IO thread.
+            // A partial folder list beats crashing the IO thread — but the
+            // caller must know it is partial, not a small gallery.
+            complete = false
         }
-        return counts.values.sortedByDescending { it.count }
+        return BucketsResult(counts.values.sortedByDescending { it.count }, complete)
     }
 
     companion object {

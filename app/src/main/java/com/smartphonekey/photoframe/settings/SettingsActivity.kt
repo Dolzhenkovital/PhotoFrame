@@ -194,7 +194,7 @@ class SettingsActivity : AppCompatActivity() {
     private fun showBucketPicker() {
         val appContext = applicationContext
         app.ioExecutor.execute {
-            val buckets = try {
+            val result = try {
                 MediaStoreScanner(appContext.contentResolver).listBuckets()
             } catch (e: SecurityException) {
                 // Permission revoked since the last grant — say that, not
@@ -206,6 +206,7 @@ class SettingsActivity : AppCompatActivity() {
                 }
                 return@execute
             }
+            val buckets = result.buckets
             runOnUiThread {
                 // The gallery query can be slow on a big card; by the time it
                 // lands the user may have backgrounded this screen — showing
@@ -214,6 +215,11 @@ class SettingsActivity : AppCompatActivity() {
                 if (isFinishing ||
                     !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
                 ) {
+                    return@runOnUiThread
+                }
+                if (!result.complete) {
+                    // Provider hiccup, not a small gallery — invite a retry.
+                    Toast.makeText(this, R.string.scan_failed, Toast.LENGTH_LONG).show()
                     return@runOnUiThread
                 }
                 if (buckets.isEmpty()) {
