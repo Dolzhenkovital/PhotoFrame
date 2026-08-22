@@ -19,6 +19,7 @@
     <string name="gallery_bucket_count">%1$s (%2$d)</string>
     <string name="gallery_permission_denied">Доступ до фото відхилено — надайте його, щоб використовувати галерею</string>
     <string name="gallery_empty">У галереї пристрою не знайдено фотографій</string>
+    <string name="scan_failed">Сканування не вдалося — ваші фото збережено, спробуйте ще раз</string>
 
     <string name="pref_source_title">Показувати фото з</string>
     <string name="source_both">Локальна тека + Google Photos</string>

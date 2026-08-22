@@ -76,10 +76,31 @@ class LoopbackAuth(
         if (uiListener === listener) uiListener = null
     }
 
+    /**
+     * Guards the check-generation-then-write-tokens pair against a
+     * concurrent signOut(): without it, sign-out could clear the store
+     * between the check and the write, and the in-flight response would
+     * quietly restore access. signOut() invalidates and clears UNDER the
+     * same lock, so a writer sees either the old generation (and writes
+     * before the clear) or the new one (and drops the tokens).
+     */
+    private val tokenWriteLock = Any()
+
+    /** True (and persisted) only if [gen] is still current. */
+    private fun storeTokensIfCurrent(gen: Long, tokens: TokenJson.Tokens): Boolean =
+        synchronized(tokenWriteLock) {
+            if (!generation.isCurrent(gen)) return false
+            storeTokens(tokens)
+            true
+        }
+
     // Both callbacks resolve the CURRENT consumers at delivery time — never
-    // the ones captured when the flow began.
-    private fun deliverToken(accessToken: String) {
+    // the ones captured when the flow began. Token delivery re-checks the
+    // generation ON the main thread too: a signOut() racing the post must
+    // not have a sync started on its heels.
+    private fun deliverToken(accessToken: String, gen: Long) {
         main.post {
+            if (!generation.isCurrent(gen)) return@post
             onAccessToken?.invoke(accessToken)
             uiListener?.onToken(accessToken)
         }
@@ -128,7 +149,7 @@ class LoopbackAuth(
             return
         }
         store.validAccessToken(System.currentTimeMillis())?.let { cached ->
-            deliverToken(cached)
+            deliverToken(cached, generation.current())
             return
         }
         val refresh = store.refreshToken
@@ -149,9 +170,9 @@ class LoopbackAuth(
             val tokens = postTokenEndpoint(
                 AuthProtocol.refreshBody(clientId, clientSecret, refreshToken)
             )
-            if (!generation.isCurrent(gen)) return // signed out mid-refresh
-            storeTokens(tokens)
-            deliverToken(tokens.accessToken)
+            // Atomic with signOut(): checked and written under one lock.
+            if (!storeTokensIfCurrent(gen, tokens)) return
+            deliverToken(tokens.accessToken, gen)
         } catch (e: Exception) {
             if (!generation.isCurrent(gen)) return
             if (TokenJson.isInvalidGrant(e)) {
@@ -367,11 +388,10 @@ class LoopbackAuth(
                 )
             )
             // The redirect already cleared `pending`, so cancel() cannot
-            // reach this exchange — the generation check is what makes
+            // reach this exchange — the atomic check-and-store is what makes
             // signOut() win against an in-flight exchange.
-            if (!generation.isCurrent(flow.generation)) return
-            storeTokens(tokens)
-            deliverToken(tokens.accessToken)
+            if (!storeTokensIfCurrent(flow.generation, tokens)) return
+            deliverToken(tokens.accessToken, flow.generation)
         } catch (e: Exception) {
             if (!generation.isCurrent(flow.generation)) return
             Log.w(TAG, "Code exchange failed: ${e.message}")
@@ -427,12 +447,16 @@ class LoopbackAuth(
     /**
      * Sign out: forget tokens AND kill any in-flight token operation — an
      * exchange or refresh finishing after this call must not write tokens
-     * back into the cleared store.
+     * back into the cleared store. Invalidation and the clear happen under
+     * [tokenWriteLock], closing the check-then-write window in
+     * [storeTokensIfCurrent].
      */
     fun signOut() {
-        generation.invalidate()
+        synchronized(tokenWriteLock) {
+            generation.invalidate()
+            store.clear()
+        }
         cancel()
-        store.clear()
     }
 
     private companion object {

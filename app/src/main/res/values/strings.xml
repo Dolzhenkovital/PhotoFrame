@@ -19,6 +19,7 @@
     <string name="gallery_bucket_count">%1$s (%2$d)</string>
     <string name="gallery_permission_denied">Photo access was denied — allow it to use the device gallery</string>
     <string name="gallery_empty">No photos found in the device gallery</string>
+    <string name="scan_failed">Scan failed — your photos are kept, try again</string>
 
     <string name="pref_source_title">Show photos from</string>
     <string name="source_both">Local folder + Google Photos</string>

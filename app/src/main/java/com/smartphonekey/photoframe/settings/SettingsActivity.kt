@@ -194,7 +194,18 @@ class SettingsActivity : AppCompatActivity() {
     private fun showBucketPicker() {
         val appContext = applicationContext
         app.ioExecutor.execute {
-            val buckets = MediaStoreScanner(appContext.contentResolver).listBuckets()
+            val buckets = try {
+                MediaStoreScanner(appContext.contentResolver).listBuckets()
+            } catch (e: SecurityException) {
+                // Permission revoked since the last grant — say that, not
+                // "no photos".
+                runOnUiThread {
+                    Toast.makeText(
+                        appContext, R.string.gallery_permission_denied, Toast.LENGTH_LONG
+                    ).show()
+                }
+                return@execute
+            }
             runOnUiThread {
                 // The gallery query can be slow on a big card; by the time it
                 // lands the user may have backgrounded this screen — showing
@@ -241,35 +252,36 @@ class SettingsActivity : AppCompatActivity() {
         val appContext = applicationContext
         val bucketId = app.prefs.mediaBucketId
         app.ioExecutor.execute {
+            fun toastOnUi(text: String) = runOnUiThread {
+                Toast.makeText(appContext, text, Toast.LENGTH_LONG).show()
+            }
+
             val known = app.index.loadAll().associateBy { it.uri }
             val items = try {
                 when (kind) {
                     Prefs.LocalSourceKind.SAF ->
                         PhotoScanner(appContext.contentResolver)
                             .scan(Uri.parse(folder), known)
-                    Prefs.LocalSourceKind.MEDIA_STORE ->
-                        MediaStoreScanner(appContext.contentResolver)
+                    Prefs.LocalSourceKind.MEDIA_STORE -> {
+                        val result = MediaStoreScanner(appContext.contentResolver)
                             .scan(bucketId, known)
+                        if (!result.complete) {
+                            // Transient provider failure. The existing index
+                            // stays — an aborted walk must not masquerade as
+                            // a (nearly) empty gallery and erase photos.
+                            toastOnUi(getString(R.string.scan_failed))
+                            return@execute
+                        }
+                        result.items
+                    }
                 }
             } catch (e: SecurityException) {
-                // Revoked storage permission. The existing index stays — a
-                // failure must not masquerade as an empty gallery and wipe
-                // every indexed photo.
-                runOnUiThread {
-                    Toast.makeText(
-                        appContext, R.string.gallery_permission_denied, Toast.LENGTH_LONG
-                    ).show()
-                }
+                // Revoked storage permission: same rule, keep the index.
+                toastOnUi(getString(R.string.gallery_permission_denied))
                 return@execute
             }
             app.index.replaceAll(items)
-            runOnUiThread {
-                Toast.makeText(
-                    appContext,
-                    getString(R.string.scan_done, items.size),
-                    Toast.LENGTH_LONG
-                ).show()
-            }
+            toastOnUi(getString(R.string.scan_done, items.size))
         }
     }
 

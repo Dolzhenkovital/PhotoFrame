@@ -29,15 +29,23 @@ class MediaStoreScanner(private val resolver: ContentResolver) {
     private val inspector = PhotoInspector(resolver)
 
     /**
+     * A scan whose completeness is explicit: [complete] is false when the
+     * query or the cursor walk died mid-way. Callers must not overwrite a
+     * healthy index with an incomplete result — a transient vendor-provider
+     * failure would otherwise erase every indexed photo.
+     */
+    data class ScanResult(val items: List<PhotoItem>, val complete: Boolean)
+
+    /**
      * [bucketId] narrows the scan to one folder (a MediaStore "bucket"); null
      * scans the whole gallery. [known] is the previous index keyed by uri.
      *
      * @throws SecurityException when the storage permission was revoked —
-     * callers must NOT treat that as an empty gallery: replacing the index
-     * with the "result" would silently erase every indexed photo.
+     * callers must NOT treat that as an empty gallery either.
      */
-    fun scan(bucketId: Long?, known: Map<String, PhotoItem>): List<PhotoItem> {
+    fun scan(bucketId: Long?, known: Map<String, PhotoItem>): ScanResult {
         val out = ArrayList<PhotoItem>()
+        var complete = true
         val mimes = LocalScan.imageMimes(Build.VERSION.SDK_INT)
         // MIME filter in SQL keeps the cursor small on gallery-wide scans.
         val mimePlaceholders = mimes.joinToString(",") { "?" }
@@ -55,7 +63,8 @@ class MediaStoreScanner(private val resolver: ContentResolver) {
         } catch (e: SecurityException) {
             throw e // revoked permission is a failure, never "no photos"
         } catch (e: Exception) {
-            null // a broken provider must degrade to "no photos", not a crash
+            complete = false // broken provider: degrade, but say so
+            null
         }
         // The whole walk is guarded too: old/vendor MediaStore providers can
         // throw mid-iteration (moveToNext/getLong), and a partial index is
@@ -88,9 +97,11 @@ class MediaStoreScanner(private val resolver: ContentResolver) {
         } catch (e: SecurityException) {
             throw e // same rule mid-iteration: revoked access ≠ empty gallery
         } catch (e: Exception) {
-            // Keep whatever was indexed before the provider misbehaved.
+            // Keep whatever was indexed before the provider misbehaved —
+            // but flag the walk as incomplete so the caller keeps its index.
+            complete = false
         }
-        return out
+        return ScanResult(out, complete)
     }
 
     /** One row of [listBuckets]: a device folder as MediaStore sees it. */
@@ -116,6 +127,8 @@ class MediaStoreScanner(private val resolver: ContentResolver) {
                 mimes.toTypedArray(),
                 null
             )
+        } catch (e: SecurityException) {
+            throw e // revoked permission must surface as such, not "no folders"
         } catch (e: Exception) {
             null
         }
@@ -129,6 +142,8 @@ class MediaStoreScanner(private val resolver: ContentResolver) {
                         (prev?.count ?: 0) + 1)
                 }
             }
+        } catch (e: SecurityException) {
+            throw e
         } catch (e: Exception) {
             // A partial folder list beats crashing the IO thread.
         }
