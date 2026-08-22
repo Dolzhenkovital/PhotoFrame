@@ -216,6 +216,9 @@ class LoopbackAuth(
 
     /** Aborts a pending interactive flow (listener gets no callback). */
     fun cancel() {
+        // Also kills an exchange that already left the listen loop (the
+        // redirect clears `pending` before the token request runs).
+        generation.invalidate()
         val flow = synchronized(this) { pending.also { pending = null } }
         try {
             flow?.server?.close()
@@ -390,7 +393,18 @@ class LoopbackAuth(
                 // them as TokenError via the parser instead of "HTTP 400".
                 conn.errorStream ?: throw IOException("HTTP ${conn.responseCode}")
             }
-            val text = stream.bufferedReader().use { it.readText() }
+            // Bounded read: a real token response is ~1 KB; a broken proxy
+            // or endpoint must not be able to balloon the frame's heap.
+            val text = stream.bufferedReader().use { reader ->
+                val buffer = CharArray(MAX_TOKEN_RESPONSE_CHARS)
+                var filled = 0
+                while (filled < buffer.size) {
+                    val read = reader.read(buffer, filled, buffer.size - filled)
+                    if (read <= 0) break
+                    filled += read
+                }
+                String(buffer, 0, filled)
+            }
             return TokenJson.parse(text)
         } finally {
             conn.disconnect()
@@ -418,6 +432,7 @@ class LoopbackAuth(
         const val SOCKET_READ_TIMEOUT_MS = 10 * 1000
         const val MAX_HEADER_LINES = 100
         const val MAX_LINE_BYTES = 8 * 1024
+        const val MAX_TOKEN_RESPONSE_CHARS = 64 * 1024
         const val HTTP_TIMEOUT_MS = 30 * 1000
 
         // Plain-ASCII pages: the browser on the frame may predate emoji and

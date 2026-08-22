@@ -22,6 +22,12 @@ fun oauthConfig(name: String, localPropertiesKey: String): String {
     return ""
 }
 
+// buildConfigField splices raw text into generated Java — a quote or
+// backslash in the configured value would break the build (or worse,
+// silently change the value). Serialize as a proper literal instead.
+fun javaStringLiteral(value: String): String =
+    "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
 android {
     namespace = "com.smartphonekey.photoframe"
     compileSdk = 35
@@ -39,11 +45,11 @@ android {
 
         buildConfigField(
             "String", "GP_OAUTH_CLIENT_ID",
-            "\"${oauthConfig("GP_OAUTH_CLIENT_ID", "gp.oauthClientId")}\""
+            javaStringLiteral(oauthConfig("GP_OAUTH_CLIENT_ID", "gp.oauthClientId"))
         )
         buildConfigField(
             "String", "GP_OAUTH_CLIENT_SECRET",
-            "\"${oauthConfig("GP_OAUTH_CLIENT_SECRET", "gp.oauthClientSecret")}\""
+            javaStringLiteral(oauthConfig("GP_OAUTH_CLIENT_SECRET", "gp.oauthClientSecret"))
         )
     }
 
