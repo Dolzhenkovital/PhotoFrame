@@ -307,12 +307,14 @@ class GPhotosSyncManager(
     }
 
     private fun failWith(gen: Int, token: String, sessionId: String?, e: Exception) {
-        // Only the generation that still owns the run cleans up its session;
-        // for a stale run cancel() has already done it.
-        if (sessionId != null && gen == generation) {
-            storeSession(null)
-            deleteQuietly(token, sessionId)
-        }
+        // The session survives EVERY failure — deliberately. A 401 from an
+        // access token expiring mid-way through the 2-hour picking window,
+        // a network blip, a 5xx: none of them may destroy the user's
+        // in-progress selection. The stored id stays, the next "Add photos"
+        // re-authorizes and resumes; truly dead sessions are recognized (and
+        // cleaned up) by the resume path in begin(), and Google expires
+        // abandoned ones server-side within a day. Only explicit cancel()
+        // and a consumed pick delete sessions.
         post {
             if (gen != generation) return@post
             clearActive()

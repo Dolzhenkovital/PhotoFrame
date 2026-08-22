@@ -66,6 +66,9 @@ class MediaStoreScanner(private val resolver: ContentResolver) {
             complete = false // broken provider: degrade, but say so
             null
         }
+        // ContentResolver.query() may return null WITHOUT throwing — that is
+        // still a provider failure, never an empty gallery.
+        if (cursor == null) complete = false
         // The whole walk is guarded too: old/vendor MediaStore providers can
         // throw mid-iteration (moveToNext/getLong), and a partial index is
         // strictly better than an IO-thread crash.
@@ -137,6 +140,7 @@ class MediaStoreScanner(private val resolver: ContentResolver) {
             complete = false
             null
         }
+        if (cursor == null) complete = false // null return = failure too
         try {
             cursor?.use { c ->
                 while (c.moveToNext()) {

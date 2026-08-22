@@ -423,6 +423,34 @@ class GPhotosSyncManagerTest {
     }
 
     @Test
+    fun `auth failure mid-poll keeps the session for a re-authorized retry`() {
+        val poster = TestPoster()
+        val api = FakeApi(itemsReady = false)
+        val store = FakeStore(tempDir())
+        var storedSession: String? = null
+        val sync = manager(
+            api, store, poster,
+            storeSession = { storedSession = it },
+            loadStoredSession = { storedSession },
+        )
+
+        sync.begin("token", 1280)
+        assertTrue(sync.state is State.WaitingForPick)
+        assertEquals("sess-1", storedSession)
+
+        // The ~1h access token expires inside the 2h picking window: the
+        // next poll's getSession throws. The user's in-progress selection
+        // must survive — session neither deleted nor forgotten; the next
+        // "Add photos" re-authorizes and resumes it.
+        api.transientFailureIds = setOf("sess-1")
+        poster.runPending()
+
+        assertTrue(sync.state is State.Failed)
+        assertEquals(emptyList<String>(), api.deletedSessions)
+        assertEquals("sess-1", storedSession)
+    }
+
+    @Test
     fun `begin resumes a stored session and downloads a finished pick`() {
         val poster = TestPoster()
         val api = FakeApi(itemsReady = true, items = listOf(photo("late")))

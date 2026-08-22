@@ -12,17 +12,18 @@ package com.smartphonekey.photoframe.gphotos.oauth
  */
 class AuthGeneration {
 
-    @Volatile
-    private var generation = 0L
+    // AtomicLong, not @Volatile ++: a volatile increment is read-modify-write
+    // and two concurrent invalidations could collapse into one.
+    private val generation = java.util.concurrent.atomic.AtomicLong(0L)
 
     /** Snapshot to carry through an async operation. */
-    fun current(): Long = generation
+    fun current(): Long = generation.get()
 
     /** Kills every operation started before this call. */
     fun invalidate() {
-        generation++
+        generation.incrementAndGet()
     }
 
     /** True while no invalidation happened since [snapshot] was taken. */
-    fun isCurrent(snapshot: Long): Boolean = snapshot == generation
+    fun isCurrent(snapshot: Long): Boolean = snapshot == generation.get()
 }
