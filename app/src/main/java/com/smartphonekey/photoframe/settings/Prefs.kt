@@ -47,6 +47,11 @@ class Prefs(context: Context) {
         get() = sp.getString(KEY_BUCKET_NAME, null)
         set(value) = sp.edit().putString(KEY_BUCKET_NAME, value).apply()
 
+    /** Open picker-session id, so an unfinished pick can be resumed. */
+    var gphotosSessionId: String?
+        get() = sp.getString(KEY_GP_SESSION, null)
+        set(value) = sp.edit().putString(KEY_GP_SESSION, value).apply()
+
     val intervalSeconds: Int
         get() = sp.getString(KEY_INTERVAL, null)?.toIntOrNull()
             ?.takeIf(SlideshowIntervals::isValid)
@@ -86,6 +91,7 @@ class Prefs(context: Context) {
         const val KEY_LOCAL_KIND = "local_source_kind"
         const val KEY_BUCKET_ID = "media_bucket_id"
         const val KEY_BUCKET_NAME = "media_bucket_name"
+        const val KEY_GP_SESSION = "gp_session_id"
         const val KEY_INTERVAL = "interval_seconds"
         const val KEY_TRANSITION = "transition_effect"
         const val KEY_SOURCE = "photo_source"

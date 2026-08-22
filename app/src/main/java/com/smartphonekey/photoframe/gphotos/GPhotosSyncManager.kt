@@ -32,6 +32,16 @@ class GPhotosSyncManager(
     private val poster: Poster = MainThreadPoster(),
     private val clock: () -> Long = System::currentTimeMillis,
     private val evictAfterBytes: Long = DEFAULT_EVICT_AFTER_BYTES,
+    /**
+     * Persistence for the open picker session id, so an unfinished pick
+     * survives the polling window (and app restarts): picking a big album
+     * by hand takes longer than any reasonable window, and the session
+     * itself lives ~a day server-side. Stored on WaitingForPick, cleared on
+     * finish/cancel/failure; the next begin() resumes a stored session
+     * instead of opening a new one.
+     */
+    private val storeSession: (String?) -> Unit = {},
+    private val loadStoredSession: () -> String? = { null },
 ) {
 
     /** Main-thread dispatch, abstracted for tests. */
@@ -121,7 +131,20 @@ class GPhotosSyncManager(
         setState(State.Connecting)
         io {
             try {
-                val session = api.createSession(token)
+                // An unfinished pick from an earlier round is resumed, not
+                // replaced: the user may have spent an hour selecting an
+                // album after the frame stopped polling. Any failure on the
+                // stored id (expired, deleted) falls back to a new session.
+                val stored = loadStoredSession()
+                val session = if (stored != null) {
+                    try {
+                        api.getSession(token, stored)
+                    } catch (e: Exception) {
+                        api.createSession(token)
+                    }
+                } else {
+                    api.createSession(token)
+                }
                 post {
                     if (gen != generation) {
                         // cancel() (or a newer begin) won while we were
@@ -131,8 +154,21 @@ class GPhotosSyncManager(
                         return@post
                     }
                     activeSessionId = session.id
+                    storeSession(session.id)
+                    if (session.mediaItemsSet) {
+                        // The pick was completed while nobody was polling.
+                        io { downloadAll(gen, token, session.id, maxDimension) }
+                        return@post
+                    }
                     setState(State.WaitingForPick(session.pickerUri))
-                    schedulePoll(gen, token, session, maxDimension, clock() + session.timeoutMs)
+                    // pollingConfig.timeoutIn (~30 min) is Google's hint for
+                    // when to give up, but the session itself lives ~a day —
+                    // and hand-picking a large album takes longer than the
+                    // hint (observed: an 815-photo selection outlived it, the
+                    // frame deleted the session, and Done had nowhere to
+                    // save). Keep polling for at least two hours.
+                    val window = maxOf(session.timeoutMs, MIN_PICK_WINDOW_MS)
+                    schedulePoll(gen, token, session, maxDimension, clock() + window)
                 }
             } catch (e: Exception) {
                 failWith(gen, token, null, e)
@@ -148,6 +184,7 @@ class GPhotosSyncManager(
         val sessionId = activeSessionId
         activeToken = null
         activeSessionId = null
+        storeSession(null) // explicit cancel really abandons the pick
         if (token != null && sessionId != null) deleteQuietly(token, sessionId)
         setState(State.Idle)
     }
@@ -172,8 +209,11 @@ class GPhotosSyncManager(
                                 io { downloadAll(gen, token, session.id, maxDimension) }
 
                             clock() > deadline -> {
+                                // Stop polling but KEEP the session (it is
+                                // also still stored): the user may simply
+                                // not be done picking — the next begin()
+                                // resumes exactly where they are.
                                 clearActive()
-                                deleteQuietly(token, session.id)
                                 setState(State.Failed(null, timedOut = true))
                             }
 
@@ -233,6 +273,7 @@ class GPhotosSyncManager(
             if (gen != generation) return
 
             api.deleteSession(token, sessionId)
+            storeSession(null) // this pick is fully consumed
             val capTooSmall = cache.evictToCap(cacheCapBytes())
             val total = added
             post {
@@ -248,7 +289,10 @@ class GPhotosSyncManager(
     private fun failWith(gen: Int, token: String, sessionId: String?, e: Exception) {
         // Only the generation that still owns the run cleans up its session;
         // for a stale run cancel() has already done it.
-        if (sessionId != null && gen == generation) deleteQuietly(token, sessionId)
+        if (sessionId != null && gen == generation) {
+            storeSession(null)
+            deleteQuietly(token, sessionId)
+        }
         post {
             if (gen != generation) return@post
             clearActive()
@@ -277,5 +321,8 @@ class GPhotosSyncManager(
     private companion object {
         /** Bytes landed between mid-sync eviction passes (~1 large photo over). */
         const val DEFAULT_EVICT_AFTER_BYTES = 32L * 1024 * 1024
+
+        /** Floor for the picking window — see the schedulePoll call site. */
+        const val MIN_PICK_WINDOW_MS = 2 * 60 * 60_000L
     }
 }

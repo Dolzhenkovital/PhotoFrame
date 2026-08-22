@@ -116,6 +116,8 @@ class GPhotosSyncManagerTest {
         cap: Long = 1_000L,
         clock: () -> Long = { 1_000L },
         evictAfterBytes: Long = 32L * 1024 * 1024,
+        storeSession: (String?) -> Unit = {},
+        loadStoredSession: () -> String? = { null },
     ) = GPhotosSyncManager(
         cache = store,
         cacheCapBytes = { cap },
@@ -124,6 +126,8 @@ class GPhotosSyncManagerTest {
         poster = poster,
         clock = clock,
         evictAfterBytes = evictAfterBytes,
+        storeSession = storeSession,
+        loadStoredSession = loadStoredSession,
     )
 
     // --- Tests ---------------------------------------------------------------
@@ -337,21 +341,54 @@ class GPhotosSyncManagerTest {
     }
 
     @Test
-    fun `pick timeout surfaces as timedOut failure`() {
+    fun `pick timeout keeps the session for a later resume`() {
         val poster = TestPoster()
         val api = FakeApi(itemsReady = false) // session timeoutMs = 1000
         val store = FakeStore(tempDir())
         var now = 1_000L
-        val sync = manager(api, store, poster, clock = { now })
+        var storedSession: String? = null
+        val sync = manager(
+            api, store, poster, clock = { now },
+            storeSession = { storedSession = it },
+            loadStoredSession = { storedSession },
+        )
 
         sync.begin("token", 1280)
         assertTrue(sync.state is State.WaitingForPick)
-        now = 10_000L // way past deadline
+        assertEquals("sess-1", storedSession)
+        // The polling window is floored at two real-world hours — Google's
+        // ~30-min timeoutIn hint is shorter than hand-picking a big album.
+        now = 1_000L + 2 * 60 * 60_000L + 1
         poster.runPending()
 
         val failed = sync.state as State.Failed
         assertTrue(failed.timedOut)
-        assertEquals(listOf("sess-1"), api.deletedSessions)
+        // The unfinished pick survives: session neither deleted nor forgotten.
+        assertEquals(emptyList<String>(), api.deletedSessions)
+        assertEquals("sess-1", storedSession)
+    }
+
+    @Test
+    fun `begin resumes a stored session and downloads a finished pick`() {
+        val poster = TestPoster()
+        val api = FakeApi(itemsReady = true, items = listOf(photo("late")))
+        val store = FakeStore(tempDir())
+        var storedSession: String? = "old-sess"
+        val sync = manager(
+            api, store, poster,
+            storeSession = { storedSession = it },
+            loadStoredSession = { storedSession },
+        )
+
+        sync.begin("token", 1280)
+
+        // No new session: the stored one was picked up, its selection
+        // downloaded immediately, and the store cleared afterwards.
+        assertEquals(0, api.createdSessions)
+        assertEquals(1, (sync.state as State.Finished).added)
+        assertEquals(listOf("late"), store.committed)
+        assertEquals(listOf("old-sess"), api.deletedSessions)
+        assertEquals(null, storedSession)
     }
 
     @Test

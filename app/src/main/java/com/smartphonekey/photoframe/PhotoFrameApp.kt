@@ -54,6 +54,9 @@ class PhotoFrameApp : Application() {
             cache = gphotosCache,
             cacheCapBytes = { prefs.cacheSizeBytes },
             ioExecutor = ioExecutor,
+            // Unfinished picks survive polling timeouts and app restarts.
+            storeSession = { prefs.gphotosSessionId = it },
+            loadStoredSession = { prefs.gphotosSessionId },
         )
         // App-scoped: browser consent may outlive the Settings screen.
         gphotosAuth = LoopbackAuth(
