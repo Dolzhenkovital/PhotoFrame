@@ -143,7 +143,13 @@ class GPhotosSyncManager(
                         // Best-effort cleanup of the unusable stored session
                         // before replacing it — otherwise abandoned Picker
                         // sessions pile up server-side until they expire.
-                        api.deleteSession(token, stored)
+                        // Truly best-effort: a DELETE failing on an
+                        // already-dead id must not fail the whole sync.
+                        try {
+                            api.deleteSession(token, stored)
+                        } catch (cleanup: Exception) {
+                            // Nothing to do — the session expires on its own.
+                        }
                         api.createSession(token)
                     }
                 } else {

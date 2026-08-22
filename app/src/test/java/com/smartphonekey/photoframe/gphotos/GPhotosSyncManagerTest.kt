@@ -51,6 +51,8 @@ class GPhotosSyncManagerTest {
         var failOnCreate: Boolean = false,
         var onDownload: (PickedItem) -> Unit = {},
         var downloadSizeBytes: Int = 5,
+        /** Session ids for which getSession/deleteSession throw (expired). */
+        var deadSessionIds: Set<String> = emptySet(),
     ) : PickerClient {
         val deletedSessions = ArrayList<String>()
         var createdSessions = 0
@@ -61,13 +63,16 @@ class GPhotosSyncManagerTest {
             return PickerSession("sess-$createdSessions", "https://pick/me", 10, 1_000, false)
         }
 
-        override fun getSession(token: String, sessionId: String) =
-            PickerSession(sessionId, "https://pick/me", 10, 1_000, itemsReady)
+        override fun getSession(token: String, sessionId: String): PickerSession {
+            if (sessionId in deadSessionIds) throw IOException("session gone")
+            return PickerSession(sessionId, "https://pick/me", 10, 1_000, itemsReady)
+        }
 
         override fun listAllMediaItems(token: String, sessionId: String) = items
 
         override fun deleteSession(token: String, sessionId: String) {
-            deletedSessions.add(sessionId)
+            deletedSessions.add(sessionId) // the attempt is what tests assert
+            if (sessionId in deadSessionIds) throw IOException("session gone")
         }
 
         override fun download(token: String, item: PickedItem, maxDimension: Int, target: File) {
@@ -365,6 +370,28 @@ class GPhotosSyncManagerTest {
         assertTrue(failed.timedOut)
         // The unfinished pick survives: session neither deleted nor forgotten.
         assertEquals(emptyList<String>(), api.deletedSessions)
+        assertEquals("sess-1", storedSession)
+    }
+
+    @Test
+    fun `dead stored session falls back to a fresh one, even if DELETE fails`() {
+        val poster = TestPoster()
+        val api = FakeApi(itemsReady = false, deadSessionIds = setOf("dead-sess"))
+        val store = FakeStore(tempDir())
+        var storedSession: String? = "dead-sess"
+        val sync = manager(
+            api, store, poster,
+            storeSession = { storedSession = it },
+            loadStoredSession = { storedSession },
+        )
+
+        sync.begin("token", 1280)
+
+        // getSession AND the cleanup DELETE both threw for the stored id —
+        // the sync must still land on a brand-new session, not Failed.
+        assertTrue(sync.state is State.WaitingForPick)
+        assertEquals(1, api.createdSessions)
+        assertEquals(listOf("dead-sess"), api.deletedSessions)
         assertEquals("sess-1", storedSession)
     }
 
