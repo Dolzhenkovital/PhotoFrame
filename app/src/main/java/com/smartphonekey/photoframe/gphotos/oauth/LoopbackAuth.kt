@@ -288,13 +288,17 @@ class LoopbackAuth(
         val reader = BufferedReader(
             InputStreamReader(socket.getInputStream(), Charsets.ISO_8859_1)
         )
-        val requestLine = reader.readLine() ?: return AuthProtocol.Redirect.Ignore
-        // Drain headers so the browser sees a clean HTTP exchange. Bounded:
-        // a peer feeding endless header lines must not hold the flow — the
-        // 10s socket read timeout caps a SLOW peer, this caps a chatty one.
+        // Bounded read: BufferedReader.readLine() would buffer an arbitrarily
+        // long line in RAM, and any local app can connect to this port while
+        // the flow is open — an easy OOM on a 1 GB frame. Oversized lines
+        // are treated like any other non-redirect request.
+        val requestLine = readLineBounded(reader) ?: return AuthProtocol.Redirect.Ignore
+        // Drain headers so the browser sees a clean HTTP exchange. Bounded
+        // twice over: the 10s socket read timeout caps a SLOW peer, the
+        // line/length caps a chatty one.
         var headerLines = 0
         while (headerLines++ < MAX_HEADER_LINES) {
-            val line = reader.readLine() ?: break
+            val line = readLineBounded(reader) ?: break
             if (line.isEmpty()) break
         }
         val redirect = AuthProtocol.parseRequestLine(requestLine, expectedState)
@@ -314,6 +318,25 @@ class LoopbackAuth(
         out.write(bytes)
         out.flush()
         return redirect
+    }
+
+    /**
+     * readLine() with a hard byte budget. Returns null at EOF or when the
+     * line exceeds [MAX_LINE_BYTES] — callers treat both as "not our
+     * redirect". A real OAuth redirect line is well under 1 KB.
+     */
+    private fun readLineBounded(reader: BufferedReader): String? {
+        val sb = StringBuilder(96)
+        while (true) {
+            val c = reader.read()
+            when {
+                c == -1 -> return if (sb.isEmpty()) null else sb.toString()
+                c == '\n'.code -> return sb.toString()
+                c == '\r'.code -> { /* swallowed; \n terminates */ }
+                sb.length >= MAX_LINE_BYTES -> return null
+                else -> sb.append(c.toChar())
+            }
+        }
     }
 
     private fun exchangeBlocking(flow: PendingFlow, code: String) {
@@ -394,6 +417,7 @@ class LoopbackAuth(
         const val FLOW_TIMEOUT_MS = 10 * 60 * 1000L // whole consent window
         const val SOCKET_READ_TIMEOUT_MS = 10 * 1000
         const val MAX_HEADER_LINES = 100
+        const val MAX_LINE_BYTES = 8 * 1024
         const val HTTP_TIMEOUT_MS = 30 * 1000
 
         // Plain-ASCII pages: the browser on the frame may predate emoji and

@@ -63,6 +63,15 @@ class LocalScanTest {
     }
 
     @Test
+    fun `stale MediaStore rows are dropped, decodable ones kept`() {
+        // Zero dimensions after inspection = stale row (file deleted behind
+        // the index) — indexing it would break the slideshow and waste a
+        // MAX_PHOTOS slot.
+        assertFalse(LocalScan.keepMediaStoreItem(item(width = 0)))
+        assertTrue(LocalScan.keepMediaStoreItem(item(width = 800)))
+    }
+
+    @Test
     fun `base mimes are the three decodable-everywhere formats`() {
         assertEquals(
             setOf("image/jpeg", "image/png", "image/webp"),

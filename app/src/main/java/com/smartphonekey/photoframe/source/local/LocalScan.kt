@@ -42,4 +42,15 @@ internal object LocalScan {
             cached.lastModified == mtime &&
             cached.width > 0 &&
             cached.videoOffsetBytes != PhotoItem.MOTION_NOT_SCANNED
+
+    /**
+     * Whether a MediaStore row that survived inspection belongs in the
+     * index. Zero dimensions after a full inspection mean the bytes are
+     * not decodable — for MediaStore that is typically a STALE row (file
+     * deleted behind the index) and such rows would both break the
+     * slideshow and eat into MAX_PHOTOS. The SAF scanner deliberately
+     * keeps its zero-dimension files: its listing is live, so the file
+     * exists and is the user's own — worth attempting.
+     */
+    fun keepMediaStoreItem(item: PhotoItem): Boolean = item.width > 0
 }

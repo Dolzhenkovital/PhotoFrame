@@ -68,7 +68,9 @@ class MediaStoreScanner(private val resolver: ContentResolver) {
                 } else {
                     inspector.inspect(uri, name, size, mtime)
                 }
-                out.add(item)
+                // Stale rows (file deleted behind the index) inspect to zero
+                // dimensions — drop them instead of indexing dead entries.
+                if (LocalScan.keepMediaStoreItem(item)) out.add(item)
             }
         }
         return out
