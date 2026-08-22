@@ -1,14 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- No storage permissions: the local source uses SAF folder access,
-         which needs none on any supported API level (local-photos skill).
+    <!-- The primary local source is a SAF folder pick, which needs no
+         storage permission on any supported API level (local-photos skill).
          INTERNET is for the Google Photos Picker API only. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Device-gallery (MediaStore) source — the fallback for frames whose
+         SAF provider is broken at the firmware level (see
+         MediaStoreScanner). Permission matrix from the local-photos skill:
+         READ_EXTERNAL_STORAGE up to API 32, READ_MEDIA_IMAGES from 33, and
+         VISUAL_USER_SELECTED so API 34+ partial grants are honored silently
+         instead of re-prompting. Requested at runtime only when the user
+         actually picks the gallery source. -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission
+        android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+
+    <!-- Backup stays on, but the OAuth token store is excluded on every
+         API level — a restored backup must not carry Google credentials. -->
     <application
         android:name=".PhotoFrameApp"
         android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.PhotoFrame">

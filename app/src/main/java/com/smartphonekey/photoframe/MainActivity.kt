@@ -1,8 +1,11 @@
 package com.smartphonekey.photoframe
 
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.res.Configuration
 import android.os.Bundle
+import android.view.GestureDetector
+import android.view.MotionEvent
 import android.view.TextureView
 import android.view.View
 import android.view.WindowManager
@@ -64,8 +67,50 @@ class MainActivity : AppCompatActivity(), SlideshowController.Listener {
         val openSettings = View.OnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
-        findViewById<View>(R.id.root).setOnClickListener(openSettings)
+        val root = findViewById<View>(R.id.root)
+        root.setOnClickListener(openSettings)
         findViewById<View>(R.id.empty_button).setOnClickListener(openSettings)
+        installSwipeNavigation(root)
+    }
+
+    /**
+     * Horizontal fling = manual navigation (left → next, right → previous);
+     * a plain tap still opens Settings via the click listener.
+     */
+    @SuppressLint("ClickableViewAccessibility") // tap path IS performClick
+    private fun installSwipeNavigation(root: View) {
+        val density = resources.displayMetrics.density
+        val minDistancePx = SWIPE_DISTANCE_DP * density
+        val minVelocityPx = SWIPE_VELOCITY_DP * density
+        val detector = GestureDetector(
+            this,
+            object : GestureDetector.SimpleOnGestureListener() {
+                override fun onDown(e: MotionEvent): Boolean = true
+
+                override fun onSingleTapUp(e: MotionEvent): Boolean {
+                    root.performClick() // the settings entrance, unchanged
+                    return true
+                }
+
+                override fun onFling(
+                    e1: MotionEvent?,
+                    e2: MotionEvent,
+                    velocityX: Float,
+                    velocityY: Float,
+                ): Boolean {
+                    if (e1 == null) return false
+                    val dx = e2.x - e1.x
+                    val dy = e2.y - e1.y
+                    val horizontal = Math.abs(dx) > Math.abs(dy) &&
+                        Math.abs(dx) > minDistancePx &&
+                        Math.abs(velocityX) > minVelocityPx
+                    if (!horizontal) return false
+                    if (dx < 0) controller.showNext() else controller.showPrevious()
+                    return true
+                }
+            }
+        )
+        root.setOnTouchListener { _, event -> detector.onTouchEvent(event) }
     }
 
     override fun onResume() {
@@ -161,5 +206,11 @@ class MainActivity : AppCompatActivity(), SlideshowController.Listener {
             systemBarsBehavior =
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
+    }
+
+    private companion object {
+        // Deliberately forgiving: frame touch panels are old and imprecise.
+        const val SWIPE_DISTANCE_DP = 60f
+        const val SWIPE_VELOCITY_DP = 80f
     }
 }

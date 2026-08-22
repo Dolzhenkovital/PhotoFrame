@@ -13,6 +13,14 @@
     <string name="scanning">Scanning…</string>
     <string name="scan_done">Photos found: %1$d</string>
 
+    <string name="pref_gallery_title">Device gallery</string>
+    <string name="pref_gallery_summary_none">Show photos indexed by this device instead of a folder</string>
+    <string name="gallery_all_photos">All photos</string>
+    <string name="gallery_bucket_count">%1$s (%2$d)</string>
+    <string name="gallery_permission_denied">Photo access was denied — allow it to use the device gallery</string>
+    <string name="gallery_empty">No photos found in the device gallery</string>
+    <string name="scan_failed">Scan failed — your photos are kept, try again</string>
+
     <string name="pref_source_title">Show photos from</string>
     <string name="source_both">Local folder + Google Photos</string>
     <string name="source_local">Local folder only</string>
@@ -37,9 +45,10 @@
     <string name="gp_state_waiting">Scan the QR code with your phone and pick photos, or open the picker on this device.</string>
     <string name="gp_state_downloading">Downloading %1$d of %2$d…</string>
     <string name="gp_done">Photos added: %1$d</string>
-    <string name="gp_timeout">Time ran out. Try again.</string>
+    <string name="gp_timeout">Still picking? Your selection is kept — tap “Add photos” again when you’re done.</string>
     <string name="gp_error_generic">Google Photos error: %1$s</string>
-    <string name="gp_error_no_gms">Google Play services is not available on this device</string>
+    <string name="gp_error_not_configured">This build has no Google OAuth client configured — see the README</string>
+    <string name="gp_continue_in_browser">Continue sign-in in the browser, then return here</string>
     <string name="gp_open_here">Open on this device</string>
     <string name="gp_cancel">Cancel</string>
     <string name="gp_close">Close</string>

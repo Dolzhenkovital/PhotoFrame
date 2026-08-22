@@ -62,6 +62,14 @@ class SlideshowController(
     private var lastEffect: TransitionEffect? = null
     private var driftingView: ImageView? = null
 
+    // Swipe navigation: photos already shown (newest last) and photos
+    // "undone" by a back swipe, replayed before the queue on the way
+    // forward. Kept across start()/stop() so opening Settings (which
+    // restarts the loop) does not erase where the user can swipe back to.
+    private val history = ArrayDeque<PhotoItem>()
+    private val forwardStack = ArrayDeque<PhotoItem>()
+    private var goingBack = false
+
     /** Invoked on the main thread each time a photo lands on screen. */
     var onPhotoShown: ((PhotoItem) -> Unit)? = null
 
@@ -100,9 +108,38 @@ class SlideshowController(
         Transitions.resetProperties(viewB)
     }
 
+    /** User swiped: show the next photo now instead of on the timer. */
+    fun showNext() {
+        if (!running) return
+        // With nothing to advance to, a stuck pendingAdvance flag would
+        // fire on some later unrelated preload — don't arm it.
+        if (queue.size <= 1 && forwardStack.isEmpty()) return
+        advance()
+    }
+
+    /** User swiped back: replay the previously shown photo. */
+    fun showPrevious() {
+        if (!running || history.isEmpty()) return
+        val previous = history.removeLast()
+        // Both the photo on screen and the already-preloaded one must
+        // come back on forward swipes, in exactly this order.
+        backItem?.let { forwardStack.addFirst(it) }
+        frontItem?.let { forwardStack.addFirst(it) }
+        while (forwardStack.size > HISTORY_LIMIT) forwardStack.removeLast()
+        handler.removeCallbacks(advanceRunnable)
+        motionPlayer?.stop()
+        goingBack = true
+        pendingAdvance = true // switch the moment the decode lands
+        preload(previous)
+    }
+
     private fun preloadNext() {
+        val item = forwardStack.removeFirstOrNull() ?: queue.next() ?: return
+        preload(item)
+    }
+
+    private fun preload(item: PhotoItem) {
         nextReady = false
-        val item = queue.next() ?: return
         backItem = item
         val metrics = back.resources.displayMetrics
         val options = RequestOptions()
@@ -143,6 +180,9 @@ class SlideshowController(
     private fun onPreloadDone(success: Boolean) {
         if (!running) return
         if (!success) {
+            // A failed back-swipe target (file deleted since it was shown)
+            // falls through to the normal forward path.
+            goingBack = false
             consecutiveFailures++
             if (consecutiveFailures >= maxOf(queue.size, 3)) {
                 listener.onAllFailed()
@@ -178,6 +218,15 @@ class SlideshowController(
             if (!running) return@run
             front = incoming
             back = outgoing
+            if (goingBack) {
+                // The replaced photo went onto forwardStack, not history.
+                goingBack = false
+            } else {
+                frontItem?.let {
+                    history.addLast(it)
+                    while (history.size > HISTORY_LIMIT) history.removeFirst()
+                }
+            }
             frontItem = backItem
             backItem = null
             afterShown()
@@ -195,7 +244,7 @@ class SlideshowController(
         } else {
             maybeStartDrift(front)
         }
-        if (queue.size > 1) {
+        if (queue.size > 1 || forwardStack.isNotEmpty()) {
             preloadNext()
             handler.removeCallbacks(advanceRunnable)
             handler.postDelayed(advanceRunnable, prefs.intervalSeconds * 1000L)
@@ -237,5 +286,14 @@ class SlideshowController(
     private fun isPowerSave(): Boolean {
         val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
         return pm?.isPowerSaveMode == true
+    }
+
+    private companion object {
+        /**
+         * Swipe-back depth. PhotoItems are tiny (strings + longs), so this
+         * costs nothing; the cap exists so year-long sessions don't grow
+         * two unbounded lists.
+         */
+        const val HISTORY_LIMIT = 20
     }
 }

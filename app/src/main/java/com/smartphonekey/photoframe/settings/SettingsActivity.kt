@@ -1,8 +1,11 @@
 package com.smartphonekey.photoframe.settings
 
+import android.Manifest
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.DocumentsContract
 import android.view.LayoutInflater
@@ -14,6 +17,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
@@ -21,23 +25,69 @@ import androidx.preference.PreferenceManager
 import com.smartphonekey.photoframe.PhotoFrameApp
 import com.smartphonekey.photoframe.R
 import com.smartphonekey.photoframe.gphotos.GPhotosSyncManager
-import com.smartphonekey.photoframe.gphotos.GoogleAuth
 import com.smartphonekey.photoframe.gphotos.PickerUris
 import com.smartphonekey.photoframe.gphotos.QrCode
+import com.smartphonekey.photoframe.gphotos.oauth.LoopbackAuth
+import com.smartphonekey.photoframe.source.local.MediaStoreScanner
 import com.smartphonekey.photoframe.source.local.PhotoScanner
-import kotlin.math.max
 
 class SettingsActivity : AppCompatActivity() {
 
     private val app: PhotoFrameApp get() = application as PhotoFrameApp
 
-    private lateinit var googleAuth: GoogleAuth
     private var syncDialog: AlertDialog? = null
     private var syncListener: GPhotosSyncManager.Listener? = null
+
+    /**
+     * UI half of the auth callbacks only — the sync itself is started by
+     * PhotoFrameApp's app-scoped onAccessToken hook, so nothing here is
+     * load-bearing. Attached as a replaceable slot in onResume (a recreated
+     * screen replaces the old one) and detached in onDestroy: a pending
+     * browser-consent flow never retains a dead Activity.
+     */
+    private val authListener = object : LoopbackAuth.Listener {
+        override fun onToken(accessToken: String) {
+            // The app-scoped hook has already begun the sync.
+            if (!isFinishing &&
+                lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+            ) {
+                showSyncDialog()
+            }
+        }
+
+        override fun onError(detail: String?, userCancelled: Boolean) {
+            // Silent when the user backed out of consent themselves.
+            if (userCancelled || detail == null) return
+            if (isFinishing ||
+                !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+            ) {
+                return
+            }
+            Toast.makeText(
+                this@SettingsActivity,
+                getString(R.string.gp_error_generic, detail),
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
 
     private val pickFolder =
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             if (uri != null) onFolderPicked(uri)
+        }
+
+    private val requestGalleryPermission =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            // Result map alone is not the whole truth: on API 34+ a partial
+            // grant reports "denied" for READ_MEDIA_IMAGES while the
+            // selection permission IS granted — re-derive from checks.
+            if (hasGalleryPermission()) {
+                showBucketPicker()
+            } else {
+                Toast.makeText(
+                    this, R.string.gallery_permission_denied, Toast.LENGTH_LONG
+                ).show()
+            }
         }
 
     private val cacheSizeListener =
@@ -48,27 +98,6 @@ class SettingsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
-        googleAuth = GoogleAuth(
-            activity = this,
-            onToken = { token ->
-                // The sync itself is app-scoped — always safe to start. The
-                // dialog needs a live foreground window: showing it on a
-                // stopped/finishing Activity throws BadTokenException. When
-                // skipped here, onResume() catches up via isActive.
-                app.gphotosSync.begin(token, targetDimension())
-                if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
-                    showSyncDialog()
-                }
-            },
-            onError = { message ->
-                // null = the user backed out of consent — stay silent.
-                if (message != null) {
-                    Toast.makeText(
-                        this, getString(R.string.gp_error_generic, message), Toast.LENGTH_LONG
-                    ).show()
-                }
-            },
-        )
         if (savedInstanceState == null) {
             supportFragmentManager.beginTransaction()
                 .replace(R.id.settings_container, SettingsFragment())
@@ -80,6 +109,7 @@ class SettingsActivity : AppCompatActivity() {
         super.onResume()
         PreferenceManager.getDefaultSharedPreferences(this)
             .registerOnSharedPreferenceChangeListener(cacheSizeListener)
+        app.gphotosAuth.attachUi(authListener)
         // Sync may still be running from a previous visit, or the auth
         // callback may have landed while we were not resumed — reattach.
         if (app.gphotosSync.isActive) showSyncDialog()
@@ -94,6 +124,7 @@ class SettingsActivity : AppCompatActivity() {
     override fun onDestroy() {
         // Detach only our own observer: during recreation the new Activity
         // may already have attached its listener, which must survive.
+        app.gphotosAuth.detachUi(authListener)
         syncListener?.let { app.gphotosSync.detach(it) }
         syncListener = null
         syncDialog?.dismiss()
@@ -114,30 +145,149 @@ class SettingsActivity : AppCompatActivity() {
             uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
         )
         app.prefs.folderUri = uri.toString()
+        app.prefs.localSourceKind = Prefs.LocalSourceKind.SAF
         currentFragment()?.updateFolderSummary()
         rescan()
     }
 
+    // --- Device gallery (MediaStore) fallback --------------------------------
+
+    fun launchGalleryPicker() {
+        if (hasGalleryPermission()) {
+            showBucketPicker()
+        } else {
+            requestGalleryPermission.launch(galleryPermissions())
+        }
+    }
+
+    /** The runtime permissions the current API level wants (local-photos skill). */
+    private fun galleryPermissions(): Array<String> = when {
+        // Requesting VISUAL_USER_SELECTED alongside lets the system offer
+        // "Select photos" natively instead of the compatibility behavior.
+        Build.VERSION.SDK_INT >= 34 -> arrayOf(
+            Manifest.permission.READ_MEDIA_IMAGES,
+            Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
+        )
+        Build.VERSION.SDK_INT >= 33 ->
+            arrayOf(Manifest.permission.READ_MEDIA_IMAGES) // modern phone path
+        else ->
+            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE) // frame path (23–32)
+    }
+
+    private fun hasGalleryPermission(): Boolean {
+        fun granted(permission: String) =
+            ContextCompat.checkSelfPermission(this, permission) ==
+                PackageManager.PERMISSION_GRANTED
+        return when {
+            Build.VERSION.SDK_INT >= 34 ->
+                // Partial access counts: the user's selection is the source,
+                // never nag for more (android-compat skill, API 34 row).
+                granted(Manifest.permission.READ_MEDIA_IMAGES) ||
+                    granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+            Build.VERSION.SDK_INT >= 33 ->
+                granted(Manifest.permission.READ_MEDIA_IMAGES)
+            else -> granted(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+    }
+
+    /** Lists MediaStore buckets and lets the user pick one (or all photos). */
+    private fun showBucketPicker() {
+        val appContext = applicationContext
+        app.ioExecutor.execute {
+            val result = try {
+                MediaStoreScanner(appContext.contentResolver).listBuckets()
+            } catch (e: SecurityException) {
+                // Permission revoked since the last grant — say that, not
+                // "no photos".
+                runOnUiThread {
+                    Toast.makeText(
+                        appContext, R.string.gallery_permission_denied, Toast.LENGTH_LONG
+                    ).show()
+                }
+                return@execute
+            }
+            val buckets = result.buckets
+            runOnUiThread {
+                // The gallery query can be slow on a big card; by the time it
+                // lands the user may have backgrounded this screen — showing
+                // a dialog on a stopped window throws BadTokenException. They
+                // simply tap the preference again.
+                if (isFinishing ||
+                    !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+                ) {
+                    return@runOnUiThread
+                }
+                if (!result.complete) {
+                    // Provider hiccup, not a small gallery — invite a retry.
+                    Toast.makeText(this, R.string.scan_failed, Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+                if (buckets.isEmpty()) {
+                    Toast.makeText(this, R.string.gallery_empty, Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+                val labels = ArrayList<String>(buckets.size + 1)
+                labels.add(getString(R.string.gallery_all_photos))
+                buckets.forEach {
+                    labels.add(getString(R.string.gallery_bucket_count, it.name, it.count))
+                }
+                AlertDialog.Builder(this)
+                    .setTitle(R.string.pref_gallery_title)
+                    .setItems(labels.toTypedArray()) { _, which ->
+                        val bucket = if (which == 0) null else buckets[which - 1]
+                        app.prefs.mediaBucketId = bucket?.id
+                        app.prefs.mediaBucketName = bucket?.name
+                        app.prefs.localSourceKind = Prefs.LocalSourceKind.MEDIA_STORE
+                        currentFragment()?.updateFolderSummary()
+                        rescan()
+                    }
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show()
+            }
+        }
+    }
+
     fun rescan() {
+        val kind = app.prefs.localSourceKind
         val folder = app.prefs.folderUri
-        if (folder == null) {
+        if (kind == Prefs.LocalSourceKind.SAF && folder == null) {
             Toast.makeText(this, R.string.pref_folder_summary_none, Toast.LENGTH_SHORT).show()
             return
         }
         Toast.makeText(this, R.string.scanning, Toast.LENGTH_SHORT).show()
         val appContext = applicationContext
+        val bucketId = app.prefs.mediaBucketId
         app.ioExecutor.execute {
-            val known = app.index.loadAll().associateBy { it.uri }
-            val items = PhotoScanner(appContext.contentResolver)
-                .scan(Uri.parse(folder), known)
-            app.index.replaceAll(items)
-            runOnUiThread {
-                Toast.makeText(
-                    appContext,
-                    getString(R.string.scan_done, items.size),
-                    Toast.LENGTH_LONG
-                ).show()
+            fun toastOnUi(text: String) = runOnUiThread {
+                Toast.makeText(appContext, text, Toast.LENGTH_LONG).show()
             }
+
+            val known = app.index.loadAll().associateBy { it.uri }
+            val items = try {
+                when (kind) {
+                    Prefs.LocalSourceKind.SAF ->
+                        PhotoScanner(appContext.contentResolver)
+                            .scan(Uri.parse(folder), known)
+                    Prefs.LocalSourceKind.MEDIA_STORE -> {
+                        val result = MediaStoreScanner(appContext.contentResolver)
+                            .scan(bucketId, known)
+                        if (!result.complete) {
+                            // Transient provider failure. The existing index
+                            // stays — an aborted walk must not masquerade as
+                            // a (nearly) empty gallery and erase photos.
+                            toastOnUi(getString(R.string.scan_failed))
+                            return@execute
+                        }
+                        result.items
+                    }
+                }
+            } catch (e: SecurityException) {
+                // Revoked storage permission: same rule, keep the index.
+                toastOnUi(getString(R.string.gallery_permission_denied))
+                return@execute
+            }
+            app.index.replaceAll(items)
+            toastOnUi(getString(R.string.scan_done, items.size))
         }
     }
 
@@ -148,11 +298,16 @@ class SettingsActivity : AppCompatActivity() {
             showSyncDialog()
             return
         }
-        if (!GoogleAuth.isPlayServicesAvailable(this)) {
-            Toast.makeText(this, R.string.gp_error_no_gms, Toast.LENGTH_LONG).show()
+        if (!app.gphotosAuth.isConfigured) {
+            Toast.makeText(this, R.string.gp_error_not_configured, Toast.LENGTH_LONG).show()
             return
         }
-        googleAuth.requestAccess()
+        if (!app.gphotosAuth.isSignedIn) {
+            // First run goes through the browser — tell the user where to
+            // look before the screen visibly "does nothing".
+            Toast.makeText(this, R.string.gp_continue_in_browser, Toast.LENGTH_LONG).show()
+        }
+        app.gphotosAuth.requestAccessToken(interactive = true)
     }
 
     fun clearGooglePhotosCache() {
@@ -190,12 +345,6 @@ class SettingsActivity : AppCompatActivity() {
                 }
             }
         }
-    }
-
-    /** Screen-fitting download size: enough pixels, never 12MP originals. */
-    private fun targetDimension(): Int {
-        val metrics = resources.displayMetrics
-        return max(metrics.widthPixels, metrics.heightPixels).coerceIn(1280, 2048)
     }
 
     // --- Sync dialog ---------------------------------------------------------
@@ -319,6 +468,10 @@ class SettingsActivity : AppCompatActivity() {
                 (requireActivity() as SettingsActivity).launchFolderPicker()
                 true
             }
+            findPreference<Preference>(KEY_PICK_GALLERY)?.setOnPreferenceClickListener {
+                (requireActivity() as SettingsActivity).launchGalleryPicker()
+                true
+            }
             findPreference<Preference>(KEY_RESCAN)?.setOnPreferenceClickListener {
                 (requireActivity() as SettingsActivity).rescan()
                 true
@@ -336,9 +489,23 @@ class SettingsActivity : AppCompatActivity() {
 
         fun updateFolderSummary() {
             val prefs = (requireActivity().application as PhotoFrameApp).prefs
-            val summary = prefs.folderUri?.let { readableFolderName(it) }
-                ?: getString(R.string.pref_folder_summary_none)
-            findPreference<Preference>(KEY_PICK_FOLDER)?.summary = summary
+            val active = prefs.localSourceKind
+            val folderName = prefs.folderUri?.let { readableFolderName(it) }
+            // The active source's summary shows the concrete selection; the
+            // inactive one keeps its explainer so the user sees which of the
+            // two local pickers currently feeds the slideshow.
+            findPreference<Preference>(KEY_PICK_FOLDER)?.summary =
+                if (active == Prefs.LocalSourceKind.SAF && folderName != null) {
+                    folderName
+                } else {
+                    getString(R.string.pref_folder_summary_none)
+                }
+            findPreference<Preference>(KEY_PICK_GALLERY)?.summary =
+                if (active == Prefs.LocalSourceKind.MEDIA_STORE) {
+                    prefs.mediaBucketName ?: getString(R.string.gallery_all_photos)
+                } else {
+                    getString(R.string.pref_gallery_summary_none)
+                }
         }
 
         private fun readableFolderName(treeUri: String): String = try {
@@ -351,6 +518,7 @@ class SettingsActivity : AppCompatActivity() {
 
         companion object {
             private const val KEY_PICK_FOLDER = "pick_folder"
+            private const val KEY_PICK_GALLERY = "pick_gallery"
             private const val KEY_RESCAN = "rescan"
             private const val KEY_GP_ADD = "gp_add"
             private const val KEY_GP_CLEAR = "gp_clear"

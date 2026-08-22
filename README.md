@@ -34,29 +34,32 @@
 
 ## Налаштування Google Photos (одноразово)
 
-Google вимагає власний OAuth-клієнт для кожного застосунку:
+Вхід працює через системний браузер (loopback + PKCE, RFC 8252) — без
+Google Play services, тому він доступний і на старих рамках без GMS.
+Потрібен OAuth-клієнт типу **Desktop app**:
 
 1. [Google Cloud Console](https://console.cloud.google.com) → створіть проєкт
    → увімкніть **Photos Picker API**.
 2. **OAuth consent screen**: тип External, додайте scope
    `photospicker.mediaitems.readonly`, себе — у Test users.
-3. **Credentials → Create OAuth client ID → Android**: package
-   `com.smartphonekey.photoframe` + SHA-1 підпису збірки
-   (`./gradlew signingReport` або з Android Studio).
+3. **Credentials → Create OAuth client ID → Desktop app** → скопіюйте
+   Client ID і Client secret.
+4. Передайте їх у збірку (у git вони не потрапляють):
+   - локально — у `local.properties`:
+     `gp.oauthClientId=…` та `gp.oauthClientSecret=…`;
+   - у CI — env-змінні/секрети `GP_OAUTH_CLIENT_ID` і
+     `GP_OAUTH_CLIENT_SECRET`.
 
-Секретів у коді немає — клієнт зіставляється за package + SHA-1.
-
-**Який APK пройде вхід у Google** (SHA-1 підпису має збігатися з
-OAuth-клієнтом):
-
-| Збірка | Що потрібно |
-|--------|-------------|
-| Debug з Android Studio | працює лише з машини, чий `~/.android/debug.keystore` має зареєстрований SHA-1 (кожна машина генерує власний debug-ключ; іншим — імпортувати той самий keystore або додати свій SHA-1 у клієнт) |
-| Debug-APK з CI-артефакту | секрет `DEBUG_KEYSTORE_BASE64` (base64 того ж `debug.keystore`); застосовується **лише** до збірок з `main` — PR-збірки навмисно підписуються випадковим ключем |
-| Release-APK | додайте SHA-1 release-ключа (`keytool -list -v -keystore release.jks`) окремим Android-клієнтом у тому ж Cloud-проєкті |
+Для installed-app клієнтів client secret не вважається таємницею
+(RFC 8252 §8.5) — з репозиторію його тримаємо подалі лише щоб чужі форки
+не палили квоту цього проєкту. SHA-1 підпису APK більше ні на що не
+впливає: будь-яка збірка (Android Studio, CI-артефакт, release) входить у
+Google однаково.
 
 Поки consent screen у режимі **Testing**, входити можуть лише акаунти зі
-списку Test users.
+списку Test users, а refresh-токени живуть 7 днів — після цього рамка
+попросить увійти знову. Для «увійшов раз — працює роками» переведіть
+consent screen у **In production**.
 
 ## Збірка
 

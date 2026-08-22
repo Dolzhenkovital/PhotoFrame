@@ -51,6 +51,10 @@ class GPhotosSyncManagerTest {
         var failOnCreate: Boolean = false,
         var onDownload: (PickedItem) -> Unit = {},
         var downloadSizeBytes: Int = 5,
+        /** Session ids for which getSession/deleteSession throw 404 (dead). */
+        var deadSessionIds: Set<String> = emptySet(),
+        /** Session ids for which getSession throws a plain (transient) IO error. */
+        var transientFailureIds: Set<String> = emptySet(),
     ) : PickerClient {
         val deletedSessions = ArrayList<String>()
         var createdSessions = 0
@@ -61,13 +65,19 @@ class GPhotosSyncManagerTest {
             return PickerSession("sess-$createdSessions", "https://pick/me", 10, 1_000, false)
         }
 
-        override fun getSession(token: String, sessionId: String) =
-            PickerSession(sessionId, "https://pick/me", 10, 1_000, itemsReady)
+        override fun getSession(token: String, sessionId: String): PickerSession {
+            if (sessionId in deadSessionIds) {
+                throw PickerApi.ApiException(404, "session gone")
+            }
+            if (sessionId in transientFailureIds) throw IOException("network down")
+            return PickerSession(sessionId, "https://pick/me", 10, 1_000, itemsReady)
+        }
 
         override fun listAllMediaItems(token: String, sessionId: String) = items
 
         override fun deleteSession(token: String, sessionId: String) {
-            deletedSessions.add(sessionId)
+            deletedSessions.add(sessionId) // the attempt is what tests assert
+            if (sessionId in deadSessionIds) throw IOException("session gone")
         }
 
         override fun download(token: String, item: PickedItem, maxDimension: Int, target: File) {
@@ -116,6 +126,8 @@ class GPhotosSyncManagerTest {
         cap: Long = 1_000L,
         clock: () -> Long = { 1_000L },
         evictAfterBytes: Long = 32L * 1024 * 1024,
+        storeSession: (String?) -> Unit = {},
+        loadStoredSession: () -> String? = { null },
     ) = GPhotosSyncManager(
         cache = store,
         cacheCapBytes = { cap },
@@ -124,6 +136,8 @@ class GPhotosSyncManagerTest {
         poster = poster,
         clock = clock,
         evictAfterBytes = evictAfterBytes,
+        storeSession = storeSession,
+        loadStoredSession = loadStoredSession,
     )
 
     // --- Tests ---------------------------------------------------------------
@@ -337,21 +351,164 @@ class GPhotosSyncManagerTest {
     }
 
     @Test
-    fun `pick timeout surfaces as timedOut failure`() {
+    fun `pick timeout keeps the session for a later resume`() {
         val poster = TestPoster()
         val api = FakeApi(itemsReady = false) // session timeoutMs = 1000
         val store = FakeStore(tempDir())
         var now = 1_000L
-        val sync = manager(api, store, poster, clock = { now })
+        var storedSession: String? = null
+        val sync = manager(
+            api, store, poster, clock = { now },
+            storeSession = { storedSession = it },
+            loadStoredSession = { storedSession },
+        )
 
         sync.begin("token", 1280)
         assertTrue(sync.state is State.WaitingForPick)
-        now = 10_000L // way past deadline
+        assertEquals("sess-1", storedSession)
+        // The polling window is floored at two real-world hours — Google's
+        // ~30-min timeoutIn hint is shorter than hand-picking a big album.
+        now = 1_000L + 2 * 60 * 60_000L + 1
         poster.runPending()
 
         val failed = sync.state as State.Failed
         assertTrue(failed.timedOut)
-        assertEquals(listOf("sess-1"), api.deletedSessions)
+        // The unfinished pick survives: session neither deleted nor forgotten.
+        assertEquals(emptyList<String>(), api.deletedSessions)
+        assertEquals("sess-1", storedSession)
+    }
+
+    @Test
+    fun `dead stored session falls back to a fresh one, even if DELETE fails`() {
+        val poster = TestPoster()
+        val api = FakeApi(itemsReady = false, deadSessionIds = setOf("dead-sess"))
+        val store = FakeStore(tempDir())
+        var storedSession: String? = "dead-sess"
+        val sync = manager(
+            api, store, poster,
+            storeSession = { storedSession = it },
+            loadStoredSession = { storedSession },
+        )
+
+        sync.begin("token", 1280)
+
+        // getSession AND the cleanup DELETE both threw for the stored id —
+        // the sync must still land on a brand-new session, not Failed.
+        assertTrue(sync.state is State.WaitingForPick)
+        assertEquals(1, api.createdSessions)
+        assertEquals(listOf("dead-sess"), api.deletedSessions)
+        assertEquals("sess-1", storedSession)
+    }
+
+    @Test
+    fun `transient getSession failure keeps the stored session for retry`() {
+        val poster = TestPoster()
+        val api = FakeApi(transientFailureIds = setOf("mid-pick-sess"))
+        val store = FakeStore(tempDir())
+        var storedSession: String? = "mid-pick-sess"
+        val sync = manager(
+            api, store, poster,
+            storeSession = { storedSession = it },
+            loadStoredSession = { storedSession },
+        )
+
+        sync.begin("token", 1280)
+
+        // A Wi-Fi blip while the user is an hour into picking must NOT
+        // replace their session: fail, keep the id, let them retry.
+        assertTrue(sync.state is State.Failed)
+        assertEquals(0, api.createdSessions)
+        assertEquals(emptyList<String>(), api.deletedSessions)
+        assertEquals("mid-pick-sess", storedSession)
+    }
+
+    @Test
+    fun `403 on the stored session is treated as transient, not dead`() {
+        val api = object : PickerClient {
+            var createdSessions = 0
+            val deletedSessions = ArrayList<String>()
+            override fun createSession(token: String) = error("must not create")
+            override fun getSession(token: String, sessionId: String): PickerSession =
+                throw PickerApi.ApiException(403, "policy says no, today")
+            override fun listAllMediaItems(token: String, sessionId: String) =
+                emptyList<PickedItem>()
+            override fun deleteSession(token: String, sessionId: String) {
+                deletedSessions.add(sessionId)
+            }
+            override fun download(
+                token: String, item: PickedItem, maxDimension: Int, target: File,
+            ) = error("no downloads here")
+        }
+        val store = FakeStore(tempDir())
+        var storedSession: String? = "picky-sess"
+        val sync = GPhotosSyncManager(
+            cache = store,
+            cacheCapBytes = { 1_000L },
+            ioExecutor = DirectExecutor(),
+            api = api,
+            poster = TestPoster(),
+            clock = { 1_000L },
+            storeSession = { storedSession = it },
+            loadStoredSession = { storedSession },
+        )
+
+        sync.begin("token", 1280)
+
+        // 403 may be a token/scope/policy problem — the pick must survive.
+        assertTrue(sync.state is State.Failed)
+        assertEquals(emptyList<String>(), api.deletedSessions)
+        assertEquals("picky-sess", storedSession)
+    }
+
+    @Test
+    fun `auth failure mid-poll keeps the session for a re-authorized retry`() {
+        val poster = TestPoster()
+        val api = FakeApi(itemsReady = false)
+        val store = FakeStore(tempDir())
+        var storedSession: String? = null
+        val sync = manager(
+            api, store, poster,
+            storeSession = { storedSession = it },
+            loadStoredSession = { storedSession },
+        )
+
+        sync.begin("token", 1280)
+        assertTrue(sync.state is State.WaitingForPick)
+        assertEquals("sess-1", storedSession)
+
+        // The ~1h access token expires inside the 2h picking window: the
+        // next poll's getSession throws. The user's in-progress selection
+        // must survive — session neither deleted nor forgotten; the next
+        // "Add photos" re-authorizes and resumes it.
+        api.transientFailureIds = setOf("sess-1")
+        poster.runPending()
+
+        assertTrue(sync.state is State.Failed)
+        assertEquals(emptyList<String>(), api.deletedSessions)
+        assertEquals("sess-1", storedSession)
+    }
+
+    @Test
+    fun `begin resumes a stored session and downloads a finished pick`() {
+        val poster = TestPoster()
+        val api = FakeApi(itemsReady = true, items = listOf(photo("late")))
+        val store = FakeStore(tempDir())
+        var storedSession: String? = "old-sess"
+        val sync = manager(
+            api, store, poster,
+            storeSession = { storedSession = it },
+            loadStoredSession = { storedSession },
+        )
+
+        sync.begin("token", 1280)
+
+        // No new session: the stored one was picked up, its selection
+        // downloaded immediately, and the store cleared afterwards.
+        assertEquals(0, api.createdSessions)
+        assertEquals(1, (sync.state as State.Finished).added)
+        assertEquals(listOf("late"), store.committed)
+        assertEquals(listOf("old-sess"), api.deletedSessions)
+        assertEquals(null, storedSession)
     }
 
     @Test

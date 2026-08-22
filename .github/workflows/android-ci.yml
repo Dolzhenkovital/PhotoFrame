@@ -61,6 +61,11 @@ jobs:
       - name: Assemble debug APK
         env:
           DEBUG_KEYSTORE_PATH: ${{ steps.debug_keystore.outputs.path }}
+          # Desktop-app OAuth client for the loopback sign-in. push runs
+          # only, same reasoning as the keystore above: a PR run executes
+          # Gradle code from the PR branch, which could exfiltrate the env.
+          GP_OAUTH_CLIENT_ID: ${{ github.event_name == 'push' && secrets.GP_OAUTH_CLIENT_ID || '' }}
+          GP_OAUTH_CLIENT_SECRET: ${{ github.event_name == 'push' && secrets.GP_OAUTH_CLIENT_SECRET || '' }}
         run: gradle assembleDebug
 
       - name: Remove decoded keystore
