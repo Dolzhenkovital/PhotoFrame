@@ -56,9 +56,15 @@ class MediaStoreScanner(private val resolver: ContentResolver) {
             args += bucketId.toString()
         }
         val cursor = try {
+            // Deterministic order: newest first, id as tiebreaker. Provider
+            // default order is unspecified, and with the MAX_PHOTOS cap an
+            // unspecified order would make every rescan of a >20k-photo card
+            // index a DIFFERENT arbitrary subset. Newest photos win the cap.
             resolver.query(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                PROJECTION, selection, args, null
+                PROJECTION, selection, args,
+                "${MediaStore.Images.Media.DATE_MODIFIED} DESC, " +
+                    "${MediaStore.Images.Media._ID} DESC"
             )
         } catch (e: SecurityException) {
             throw e // revoked permission is a failure, never "no photos"

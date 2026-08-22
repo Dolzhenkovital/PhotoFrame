@@ -15,7 +15,10 @@ import java.io.ByteArrayInputStream
  * Shared by both local scanners — [PhotoScanner] (SAF tree) and
  * [MediaStoreScanner] (MediaStore bucket). Once a scanner has a content URI
  * the work is identical, and old frames pay dearly for every stream open, so
- * it happens exactly once per file, from a single reusable head buffer.
+ * the common case is one open per file, served from a single reusable head
+ * buffer. The rare file whose SOF/EXIF live beyond the 256 KB head (a huge
+ * embedded thumbnail) pays up to two extra full-stream opens — acceptable
+ * because it is a per-file exception, not the scan's steady state.
  *
  * One buffer for the whole scan (scans run on a single IO thread): a fresh
  * 256 KB allocation per file would be real GC churn on a 1 GB frame with a
