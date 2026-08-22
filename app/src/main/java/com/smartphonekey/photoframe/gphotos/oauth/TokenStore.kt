@@ -6,7 +6,16 @@ import android.content.Context
  * Persists the OAuth tokens in app-private SharedPreferences. A photo frame
  * signs in once and must survive years of reboots — the refresh token IS the
  * product feature here. Own prefs file so a settings backup/restore tool
- * that copies the default prefs does not silently move Google credentials.
+ * that copies the default prefs does not silently move Google credentials;
+ * that file is additionally excluded from Auto Backup / device transfer
+ * (backup_rules.xml, data_extraction_rules.xml).
+ *
+ * Deliberately NOT Keystore-encrypted — the accepted threat model:
+ * app-private storage already requires root or physical extraction to read,
+ * the scope is picker-readonly (only photos the user explicitly picked),
+ * and hardware keystores on the target Allwinner-class frames are unreliable
+ * enough that the mandatory fallback path would be this same plaintext file.
+ * Revisit if the app ever targets hardware with a trustworthy keystore.
  */
 class TokenStore(context: Context) {
 

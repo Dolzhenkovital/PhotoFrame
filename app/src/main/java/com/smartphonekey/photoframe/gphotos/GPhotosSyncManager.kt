@@ -140,6 +140,10 @@ class GPhotosSyncManager(
                     try {
                         api.getSession(token, stored)
                     } catch (e: Exception) {
+                        // Best-effort cleanup of the unusable stored session
+                        // before replacing it — otherwise abandoned Picker
+                        // sessions pile up server-side until they expire.
+                        api.deleteSession(token, stored)
                         api.createSession(token)
                     }
                 } else {

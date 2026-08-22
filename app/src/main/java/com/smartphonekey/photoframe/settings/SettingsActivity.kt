@@ -196,7 +196,15 @@ class SettingsActivity : AppCompatActivity() {
         app.ioExecutor.execute {
             val buckets = MediaStoreScanner(appContext.contentResolver).listBuckets()
             runOnUiThread {
-                if (isFinishing) return@runOnUiThread
+                // The gallery query can be slow on a big card; by the time it
+                // lands the user may have backgrounded this screen — showing
+                // a dialog on a stopped window throws BadTokenException. They
+                // simply tap the preference again.
+                if (isFinishing ||
+                    !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+                ) {
+                    return@runOnUiThread
+                }
                 if (buckets.isEmpty()) {
                     Toast.makeText(this, R.string.gallery_empty, Toast.LENGTH_LONG).show()
                     return@runOnUiThread
