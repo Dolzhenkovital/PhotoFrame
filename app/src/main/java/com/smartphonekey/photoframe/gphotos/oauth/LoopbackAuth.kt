@@ -107,6 +107,9 @@ class LoopbackAuth(
 
     private class PendingFlow(
         val server: ServerSocket,
+        /** Captured at bind time: localPort is undefined once the server
+         *  closes, and the code exchange runs after exactly that. */
+        val port: Int,
         val verifier: String,
         val state: String,
         val authUrl: String,
@@ -184,13 +187,15 @@ class LoopbackAuth(
                 }
                 val verifier = Pkce.newVerifier()
                 val state = Pkce.newState()
+                val boundPort = server.localPort
                 flow = PendingFlow(
                     server = server,
+                    port = boundPort,
                     verifier = verifier,
                     state = state,
                     authUrl = AuthProtocol.authorizationUrl(
                         clientId = clientId,
-                        port = server.localPort,
+                        port = boundPort,
                         codeChallenge = Pkce.challengeS256(verifier),
                         state = state,
                         // No stored refresh token ⇒ force the consent prompt,
@@ -200,7 +205,14 @@ class LoopbackAuth(
                     generation = generation.current(),
                 )
                 pending = flow
-                ioExecutor.execute { listenBlocking(flow) }
+                // Dedicated thread: accept() can block for the whole 10-min
+                // window, and the shared 2-thread IO executor also carries
+                // scans, downloads and Picker calls — a sign-in must not
+                // starve them. Token HTTP stays on the IO executor.
+                Thread({ listenBlocking(flow) }, "oauth-loopback").apply {
+                    isDaemon = true
+                    start()
+                }
             }
         }
         try {
@@ -269,7 +281,8 @@ class LoopbackAuth(
 
         finishFlow(flow)
         when (outcome) {
-            is AuthProtocol.Redirect.Code -> exchangeBlocking(flow, outcome.code)
+            is AuthProtocol.Redirect.Code ->
+                ioExecutor.execute { exchangeBlocking(flow, outcome.code) }
             is AuthProtocol.Redirect.Error -> {
                 val cancelled = outcome.error == "access_denied"
                 deliverError(outcome.error, cancelled)
@@ -350,7 +363,7 @@ class LoopbackAuth(
                     clientSecret = clientSecret,
                     code = code,
                     verifier = flow.verifier,
-                    port = flow.server.localPort,
+                    port = flow.port,
                 )
             )
             // The redirect already cleared `pending`, so cancel() cannot

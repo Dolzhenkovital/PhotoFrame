@@ -31,6 +31,10 @@ class MediaStoreScanner(private val resolver: ContentResolver) {
     /**
      * [bucketId] narrows the scan to one folder (a MediaStore "bucket"); null
      * scans the whole gallery. [known] is the previous index keyed by uri.
+     *
+     * @throws SecurityException when the storage permission was revoked —
+     * callers must NOT treat that as an empty gallery: replacing the index
+     * with the "result" would silently erase every indexed photo.
      */
     fun scan(bucketId: Long?, known: Map<String, PhotoItem>): List<PhotoItem> {
         val out = ArrayList<PhotoItem>()
@@ -48,6 +52,8 @@ class MediaStoreScanner(private val resolver: ContentResolver) {
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                 PROJECTION, selection, args, null
             )
+        } catch (e: SecurityException) {
+            throw e // revoked permission is a failure, never "no photos"
         } catch (e: Exception) {
             null // a broken provider must degrade to "no photos", not a crash
         }
@@ -79,6 +85,8 @@ class MediaStoreScanner(private val resolver: ContentResolver) {
                     if (LocalScan.keepMediaStoreItem(item)) out.add(item)
                 }
             }
+        } catch (e: SecurityException) {
+            throw e // same rule mid-iteration: revoked access ≠ empty gallery
         } catch (e: Exception) {
             // Keep whatever was indexed before the provider misbehaved.
         }

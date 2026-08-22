@@ -242,13 +242,25 @@ class SettingsActivity : AppCompatActivity() {
         val bucketId = app.prefs.mediaBucketId
         app.ioExecutor.execute {
             val known = app.index.loadAll().associateBy { it.uri }
-            val items = when (kind) {
-                Prefs.LocalSourceKind.SAF ->
-                    PhotoScanner(appContext.contentResolver)
-                        .scan(Uri.parse(folder), known)
-                Prefs.LocalSourceKind.MEDIA_STORE ->
-                    MediaStoreScanner(appContext.contentResolver)
-                        .scan(bucketId, known)
+            val items = try {
+                when (kind) {
+                    Prefs.LocalSourceKind.SAF ->
+                        PhotoScanner(appContext.contentResolver)
+                            .scan(Uri.parse(folder), known)
+                    Prefs.LocalSourceKind.MEDIA_STORE ->
+                        MediaStoreScanner(appContext.contentResolver)
+                            .scan(bucketId, known)
+                }
+            } catch (e: SecurityException) {
+                // Revoked storage permission. The existing index stays — a
+                // failure must not masquerade as an empty gallery and wipe
+                // every indexed photo.
+                runOnUiThread {
+                    Toast.makeText(
+                        appContext, R.string.gallery_permission_denied, Toast.LENGTH_LONG
+                    ).show()
+                }
+                return@execute
             }
             app.index.replaceAll(items)
             runOnUiThread {

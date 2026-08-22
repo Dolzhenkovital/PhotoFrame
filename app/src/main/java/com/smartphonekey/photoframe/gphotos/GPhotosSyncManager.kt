@@ -140,6 +140,11 @@ class GPhotosSyncManager(
                     try {
                         api.getSession(token, stored)
                     } catch (e: Exception) {
+                        // The stored id is known-dead: forget it NOW, before
+                        // the replacement attempt — if createSession() below
+                        // also fails, a retry must not chew on the same
+                        // expired id again.
+                        storeSession(null)
                         // Best-effort cleanup of the unusable stored session
                         // before replacing it — otherwise abandoned Picker
                         // sessions pile up server-side until they expire.
